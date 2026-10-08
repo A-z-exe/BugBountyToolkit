@@ -1,239 +1,251 @@
-# 🛡️ Advanced Bug Bounty Security Assessment Tool
+# 🛡️ BBT — Bug Bounty Toolkit
 
-A comprehensive security assessment tool designed for bug bounty hunters, penetration testers, and security researchers.
+A cross-platform security assessment toolkit for testers who need to assess
+assets **on an internal / local network first** and **public / hosted sites
+after**. It runs fully in pure Python (only `requests` is required) and uses
+external tools such as `nmap`, `nikto`, `subfinder` or `sqlmap` *optionally*
+when they are installed.
 
-## ⚠️ Legal Disclaimer
+> ⚠️ **Legal notice** — Use this only against systems you own or are explicitly
+> authorized in writing to test, and always stay within the declared scope of a
+> bug bounty program. Unauthorized access is illegal. You are responsible for
+> your actions.
 
-**IMPORTANT**: This tool is for educational and authorized testing purposes only. Users must:
-- Only test systems they own or have explicit written permission to test
-- Comply with all applicable laws and regulations
-- Respect bug bounty program rules and scope
-- Never use this tool for malicious purposes
+---
 
-Unauthorized access to computer systems is illegal. Users are solely responsible for legal compliance.
+## ✨ What's new in v2
 
-## 🚀 Features
+This is a rewrite of the original single-file script. Highlights:
 
-### 🔍 Information Gathering
-- Domain WHOIS lookup
-- DNS enumeration
-- Subdomain discovery
-- SSL certificate analysis
-- robots.txt retrieval
+- **Cross-platform** — Windows, Linux and macOS. No more `which`/`dig`/`echo |`
+  assumptions that only worked on Linux.
+- **Modular package** (`bbt/`) instead of one long file.
+- **Pure-Python network scanning** (host discovery + TCP port scan + banners)
+  so internal networks can be scanned without installing nmap.
+- **Local-first workflow** — targets are classified as local/remote and the
+  local ones are always tested first.
+- **Fixed real bugs** from v1:
+  - broken `echo | openssl ...` SSL command (now uses the `ssl` module);
+  - `--timeout` was parsed but ignored (now wired everywhere);
+  - `netloc` with port broke DNS/SSL commands (now uses `hostname`);
+  - SSL command injection / useless input sanitisation removed;
+  - failed commands no longer reported as valid output files;
+  - `check_requirements` no longer blocks `info` scans because `sqlmap` is
+    missing — every module declares its own needs;
+  - double output directory creation in `full` mode removed.
+- **Real checks** instead of placeholders: proper CORS verdicts, soft-404 aware
+  content discovery, cookie flags, HTTP method review, certificate inspection,
+  JWT analysis.
+- **Rate limiting, timeouts and concurrency** actually implemented.
+- **Tests** and a proper `requirements.txt` / `.gitignore`.
 
-### 🛡️ Vulnerability Scanning
-- Network port scanning
-- Web vulnerability assessment
-- Common misconfiguration detection
-- Security headers analysis
+---
 
-### ⚔️ Attack Testing
-- SQL injection testing (safe mode)
-- Directory and file fuzzing
-- XSS payload generation
-- CORS misconfiguration testing
+## 🔍 Modules
 
-### 🔌 API & Mobile Security
-- HTTP security headers analysis
-- CORS configuration testing
-- API documentation discovery
-- JWT analysis guidelines
+| Module | What it does |
+|--------|--------------|
+| `info` | DNS resolution / reverse DNS, optional WHOIS + `dig`, TLS certificate details |
+| `network` | Host discovery on a CIDR, TCP port scan, banner grabbing, risky-service flagging, optional nmap |
+| `web` | Security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404 aware content discovery |
+| `api` | API documentation discovery, GraphQL introspection check, CORS, JWT analysis |
+| `injection` | Reflected XSS, error-based SQLi, open redirect (time-based SQLi only with `--aggressive`) |
 
-### 📊 Comprehensive Reporting
-- Detailed markdown reports
-- JSON summaries for automation
-- Structured findings documentation
-- Actionable recommendations
+Every finding carries a **severity**, **confidence** and enough evidence to
+verify it manually. Handled risks are not silently dropped — false positives are
+expected and the report says so.
+
+---
 
 ## 📋 Requirements
 
-### Required Tools
-```bash
-# Ubuntu/Debian installation
-sudo apt-get update
-sudo apt-get install whois dnsutils nmap nikto curl openssl
+- **Python 3.8+**
+- Python packages:
 
-# Additional tools (install separately)
-# Subfinder: https://github.com/projectdiscovery/subfinder
-# SQLMap: https://github.com/sqlmapproject/sqlmap
-# Wfuzz: pip install wfuzz
+```bash
+pip install -r requirements.txt
 ```
 
-### Python Dependencies
-```bash
-pip install requests pathlib
-```
+Optional external tools (detected automatically, never required):
+
+| Tool | Adds |
+|------|------|
+| `nmap` | richer service/version detection |
+| `nikto` | extra web server checks |
+| `subfinder` | passive subdomain discovery |
+| `whois` | domain registration data |
+| `dig` | detailed DNS records |
+| `sqlmap` | advanced/manual SQL injection testing |
 
 ## 🔧 Installation
 
-1. **Clone the repository**
 ```bash
-git clone https://github.com/a-z-exe/BugBountyToolkit.git
+git clone https://github.com/A-z-exe/BugBountyToolkit.git
 cd BugBountyToolkit
-```
-
-2. **Install Python dependencies**
-```bash
 pip install -r requirements.txt
 ```
 
-3. **Install system tools**
-```bash
-sudo apt-get install whois dnsutils nmap nikto curl openssl
-```
+---
 
-4. **Install additional tools**
-```bash
-# Subfinder
-go install -v github.com/projectdiscovery/subfinder/v2/cmd/subfinder@latest
+## 🚀 Usage
 
-# SQLMap
-git clone https://github.com/sqlmapproject/sqlmap.git
-cd sqlmap
-pip install -r requirements.txt
-
-# Wfuzz
-pip install wfuzz
-```
-
-## 💻 Usage
-
-### Command Line Mode
+### Quick start
 
 ```bash
-# Full comprehensive scan
-python bugbounty_tool.py -t https://example.com -m full
+# Internal network first
+python bugbounty_tool.py -t 192.168.1.0/24 -m network
 
-# Information gathering only
-python bugbounty_tool.py -t example.com -m info
+# Then a hosted site
+python bugbounty_tool.py -t https://app.example.com -m full
 
-# Vulnerability scanning
-python bugbounty_tool.py -t https://example.com -m vuln
-
-# Attack testing
-python bugbounty_tool.py -t https://example.com -m attack
-
-# API security review
-python bugbounty_tool.py -t https://api.example.com -m api
+# Local web app by hostname, then the public one, in one session
+python bugbounty_tool.py -t http://portal.local -t https://portal.example.com -m web --scope auto
 ```
 
-### Interactive Mode
+### Interactive mode
 
 ```bash
 python bugbounty_tool.py
 ```
 
-### Command Line Options
+### Modes
 
 ```bash
-usage: bugbounty_tool.py [-h] [-t TARGET] [-m {info,vuln,attack,api,full}] [--skip-legal] [--timeout TIMEOUT]
-
-options:
-  -h, --help            Show help message
-  -t, --target TARGET   Target URL or domain
-  -m, --mode MODE       Scan mode: info, vuln, attack, api, or full
-  --skip-legal          Skip legal disclaimer (use responsibly)
-  --timeout TIMEOUT     Command timeout in seconds (default: 30)
+python bugbounty_tool.py -t <target> -m info       # DNS / WHOIS / TLS
+python bugbounty_tool.py -t <target> -m network    # ports / services
+python bugbounty_tool.py -t <target> -m web        # web assessment
+python bugbounty_tool.py -t <target> -m api        # API review
+python bugbounty_tool.py -t <target> -m injection  # injection checks
+python bugbounty_tool.py -t <target> -m full       # everything (local first)
 ```
 
-## 📁 Output Structure
+### Command line options (selection)
 
 ```
-results_example.com_20240830_143022/
-├── SECURITY_REPORT.md          # Main assessment report
-├── scan_summary.json           # JSON summary for automation
-├── whois_output.txt           # Domain information
-├── dig_output.txt             # DNS records
-├── subfinder_output.txt       # Discovered subdomains
-├── ssl_info.txt               # SSL certificate details
-├── robots.txt                 # Retrieved robots.txt
-├── nmap_output.txt            # Port scan results
-├── nikto_output.txt           # Web vulnerability scan
-├── misconfiguration_checks.json # Configuration issues
-├── sqlmap_output.txt          # SQL injection test results
-├── wfuzz_output.txt           # Directory fuzzing results
-├── xss_payloads.txt           # XSS test payloads
-├── headers_analysis.json      # Security headers analysis
-├── cors_analysis.json         # CORS configuration test
-├── jwt_analysis.md            # JWT testing guidelines
-└── api_docs_discovery.json    # API documentation findings
+-t, --target           Target (URL, host, IP or CIDR). Repeatable.
+-f, --targets-file     File with one target per line.
+-m, --mode             info | network | web | api | injection | full
+--scope                auto | local | remote   (auto runs local targets first)
+--scan-network         Also port-scan the host behind each URL target
+--ports                Port spec, e.g. "22,80,443,8000-8100"
+--threads              Worker threads (default 64)
+--rate                 HTTP requests/second (default 30, 0 = unlimited)
+--timeout              HTTP timeout in seconds (default 15)
+--connect-timeout      TCP connect timeout (default 3)
+--wordlist             Custom wordlist for content discovery
+--jwt                  JWT/bearer token to analyse (repeatable)
+--aggressive           Enable intrusive checks (time-based SQLi)
+--verify-tls           Verify TLS certificates (default off for self-signed internal sites)
+--no-optional-tools    Never call external tools even if installed
+--skip-legal           Skip the legal disclaimer (authorized use only)
+--no-color / -v        UI / verbose logging
+-o, --output           Output root directory (default "results")
 ```
 
-## 🔒 Security Features
+### The local-first workflow
 
-- **Input Validation**: All user inputs are sanitized and validated
-- **Safe Command Execution**: No shell injection vulnerabilities
-- **Rate Limiting**: Respectful request timing
-- **Error Handling**: Comprehensive exception management
-- **Legal Safeguards**: Built-in legal disclaimer and warnings
+For a target list, BBT classifies each entry as **local** or **remote**:
 
-## 🎯 Best Practices
+- private IPs, CIDRs and hostnames that resolve to private addresses → **local**
+- everything else → **remote**
 
-1. **Always get permission** before testing any system
-2. **Start with information gathering** to understand the target
-3. **Review all findings manually** - automated tools can have false positives
-4. **Follow responsible disclosure** for any vulnerabilities found
-5. **Keep detailed notes** of your testing methodology
+With `--scope auto` (default) the local targets are always processed first, so
+you validate the staging/internal deployment before touching the hosted site.
+Use `--scope local` or `--scope remote` to restrict a run. `--scan-network`
+adds a port scan of the host behind each URL.
 
-## 🤝 Contributing
+---
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+## 📁 Output structure
 
-### Development Guidelines
-- Follow PEP 8 coding standards
-- Add proper error handling
-- Include security considerations
-- Update documentation for new features
-- Test thoroughly before submitting
+```
+results/scan_20260101_120000/
+├── session_summary.json               # all targets in one machine-readable file
+├── bbt.log                            # debug log for the whole run
+├── 192.168.1.10_8080/                 # one directory per target
+│   ├── SECURITY_REPORT.md
+│   ├── scan_summary.json
+│   ├── network_scan.json
+│   ├── network_scan.txt
+│   ├── dns_info.json
+│   ├── tls_certificate.json
+│   ├── content_discovery.json
+│   ├── cors_analysis.json
+│   ├── http_methods.json
+│   └── api_docs_discovery.json
+└── https___app.example.com/
+    └── ...
+```
 
-## 🐛 Bug Reports
+---
 
-If you find a bug or security issue:
-1. **DO NOT** open a public issue for security vulnerabilities
-2. Contact the maintainer privately for security issues
-3. For general bugs, open a GitHub issue with:
-   - Python version
-   - Operating system
-   - Steps to reproduce
-   - Expected vs actual behavior
+## 🏗️ Project layout
 
-## 📚 Educational Resources
+```
+bugbounty_tool.py          # entry point (python bugbounty_tool.py ...)
+bbt/
+├── cli.py                 # argument parsing + interactive mode
+├── core.py                # scanner orchestration, target ordering
+├── config.py              # all tunables and limits
+├── context.py             # shared state passed to modules
+├── findings.py            # Finding model + aggregation
+├── target.py              # URL / host / IP / CIDR parsing
+├── http_client.py         # requests wrapper (rate limiting, defaults)
+├── checks.py              # reusable web/API checks
+├── crypto.py              # TLS certificate inspection (stdlib)
+├── reporting.py           # Markdown + JSON reports
+├── ui.py                  # console output + logging
+├── utils.py               # subprocess, sockets, ports, helpers
+└── modules/
+    ├── base.py            # module interface
+    ├── info.py
+    ├── network.py
+    ├── web.py
+    ├── api.py
+    └── injection.py
+tests/                     # unit tests (no network required)
+legacy/                    # the original v1 script, kept for reference
+```
 
-- [OWASP Web Security Testing Guide](https://owasp.org/www-project-web-security-testing-guide/)
-- [Bug Bounty Methodology](https://github.com/jhaddix/tbhm)
-- [Penetration Testing Execution Standard](http://www.pentest-standard.org/)
+---
+
+## 🧪 Tests
+
+```bash
+python -m unittest discover -s tests -v
+# or
+python -m pytest tests
+```
+
+The tests do not touch the network; they cover target parsing, port specs,
+CIDR expansion and finding aggregation.
+
+---
+
+## 🔒 Safety
+
+- Commands are executed **without a shell** (`subprocess` with argument lists),
+  so there is no command injection.
+- HTTP requests are rate limited and time-bounded.
+- Intrusive payloads (time-based SQLi) run only with `--aggressive`.
+- TLS verification is off by default because internal sites commonly use
+  self-signed certificates; enable it with `--verify-tls`.
+
+---
 
 ## ⚖️ License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT — see [LICENSE](LICENSE.md).
 
 ## 👨‍💻 Author
 
 **AmirHossein Zarei (A-z-exe)**
-- 🌐 GitHub: [github.com/a-z-exe](https://github.com/a-z-exe)
-- 📱 Telegram: [t.me/A_Z_exe](https://t.me/A_Z_exe)
-- 📷 Instagram: [instagram.com/A_Z_exe](https://instagram.com/A_Z_exe)
 
-## 🙏 Acknowledgments
-
-- [ProjectDiscovery](https://github.com/projectdiscovery) for excellent security tools
-- [OWASP](https://owasp.org/) for security guidelines and resources
-- The bug bounty and security research community
-
-## 📋 TODO
-
-- [ ] Add support for custom wordlists
-- [ ] Implement multithreading for faster scans
-- [ ] Add Docker container support
-- [ ] Create web interface
-- [ ] Add more API security tests
-- [ ] Implement custom vulnerability checks
-- [ ] Add integration with popular bug bounty platforms
+- GitHub: [github.com/a-z-exe](https://github.com/a-z-exe)
+- Telegram: [t.me/A_Z_exe](https://t.me/A_Z_exe)
+- Instagram: [instagram.com/A_Z_exe](https://instagram.com/A_Z_exe)
 
 ---
 
-**⚠️ Remember**: This tool is only as good as the person using it. Always combine automated testing with manual security review!
+**⚠️ Remember:** an automated scan is a starting point, not a verdict. Always
+verify findings manually and follow responsible disclosure.

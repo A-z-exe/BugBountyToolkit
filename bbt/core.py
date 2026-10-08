@@ -1,0 +1,159 @@
+"""Scan orchestration: module registry, target ordering and per-target execution."""
+from __future__ import annotations
+
+import logging
+import time
+from pathlib import Path
+from typing import Dict, List, Optional, Sequence, Type
+
+from .config import Config
+from .context import ScanContext
+from .findings import FindingsStore
+from .http_client import HttpClient
+from .modules.api import ApiModule
+from .modules.base import BaseModule
+from .modules.info import InfoModule
+from .modules.injection import InjectionModule
+from .modules.network import NetworkModule
+from .modules.web import WebModule
+from .reporting import write_reports, write_session_summary
+from .target import Target
+from .ui import UI
+from .utils import RateLimiter, is_private_ip, now_stamp, resolve_host, safe_filename
+
+MODULE_CLASSES: Dict[str, Type[BaseModule]] = {
+    "info": InfoModule,
+    "network": NetworkModule,
+    "web": WebModule,
+    "api": ApiModule,
+    "injection": InjectionModule,
+}
+
+FULL_ORDER = ["info", "network", "web", "api", "injection"]
+
+
+def modules_for_mode(mode: str) -> List[Type[BaseModule]]:
+    if mode == "full":
+        return [MODULE_CLASSES[name] for name in FULL_ORDER]
+    if mode in MODULE_CLASSES:
+        return [MODULE_CLASSES[mode]]
+    raise ValueError(f"unknown mode: {mode}")
+
+
+class Scanner:
+    def __init__(self, config: Config, ui: UI, logger: logging.Logger) -> None:
+        self.config = config
+        self.ui = ui
+        self.log = logger
+        self.rate_limiter = RateLimiter(config.rate)
+
+    # ------------------------------------------------------------------
+    def classify(self, target: Target) -> str:
+        """Return 'local' or 'remote' for a target."""
+        if target.kind in ("ip", "cidr"):
+            return "local"
+        if target.is_private:
+            return "local"
+        addresses = resolve_host(target.host)
+        if addresses and any(is_private_ip(ip) for ip in addresses):
+            return "local"
+        return "remote"
+
+    def order_targets(self, targets: Sequence[Target]) -> List[Target]:
+        local: List[Target] = []
+        remote: List[Target] = []
+        scope = self.config.scope
+        for target in targets:
+            kind = self.classify(target)
+            if scope == "local" and kind != "local":
+                self.ui.warn(f"Skipping {target.display} (outside local scope)")
+                continue
+            if scope == "remote" and kind != "remote":
+                self.ui.warn(f"Skipping {target.display} (outside remote scope)")
+                continue
+            (local if kind == "local" else remote).append(target)
+        return local + remote
+
+    # ------------------------------------------------------------------
+    def scan(self, targets: Sequence[Target], mode: str) -> Path:
+        ordered = self.order_targets(targets)
+        if not ordered:
+            raise ValueError("no targets remain after applying the scope filter")
+
+        session_dir = self.config.output_root / f"scan_{now_stamp()}"
+        session_dir.mkdir(parents=True, exist_ok=True)
+        self.ui.ok(f"Session directory: {session_dir}")
+
+        session_results: List[Dict[str, object]] = []
+        for index, target in enumerate(ordered, 1):
+            kind = self.classify(target)
+            self.ui.header(
+                f"[{index}/{len(ordered)}] {target.display}  ({kind}, mode={mode})"
+            )
+            summary = self._scan_target(target, mode, session_dir)
+            session_results.append(summary)
+
+        summary_path = write_session_summary(session_dir, session_results)
+        self.ui.ok(f"Session summary: {summary_path}")
+        return session_dir
+
+    # ------------------------------------------------------------------
+    def _scan_target(self, target: Target, mode: str, session_dir: Path) -> Dict[str, object]:
+        target_dir = session_dir / safe_filename(target.display)
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        findings = FindingsStore()
+        http = HttpClient(self.config, rate_limiter=self.rate_limiter, logger=self.log)
+        ctx = ScanContext(
+            config=self.config,
+            target=target,
+            output_dir=target_dir,
+            logger=self.log,
+            ui=self.ui,
+            http=http,
+            findings=findings,
+        )
+
+        started = time.monotonic()
+        ran: List[str] = []
+        try:
+            for module_cls in modules_for_mode(mode):
+                module = module_cls(ctx)
+                if not module.applies(target):
+                    self.log.debug("module %s does not apply to %s", module.name, target.display)
+                    continue
+                if not module.enabled():
+                    self.ui.warn(
+                        f"Skipping {module.name} (missing tools: {', '.join(module.missing_tools())})"
+                    )
+                    continue
+                self.ui.info(f"Running module: {module.name} - {module.description}")
+                try:
+                    produced = module.run(target) or []
+                except Exception as exc:  # noqa: BLE001 - isolate module failures
+                    self.log.exception("module %s crashed: %s", module.name, exc)
+                    self.ui.error(f"Module {module.name} failed: {exc}")
+                    continue
+                for finding in produced:
+                    ctx.add_finding(finding)
+                ran.append(module.name)
+        finally:
+            duration = time.monotonic() - started
+            md_path, json_path = write_reports(ctx, mode, duration)
+            http.close()
+
+        self.ui.ok(
+            f"Finished in {duration:.1f}s - {len(findings)} finding(s). "
+            f"Report: {md_path}"
+        )
+        return {
+            "target": target.to_dict(),
+            "scope": self.classify(target),
+            "mode": mode,
+            "modules": ran,
+            "duration_seconds": round(duration, 2),
+            "counts": findings.counts(),
+            "total_findings": len(findings),
+            "report": str(md_path),
+            "summary": str(json_path),
+        }
