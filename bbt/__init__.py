@@ -9,7 +9,7 @@ when they are present. In v2.1 the web module also crawls same-origin pages and
 the report correlates findings into attack paths.
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 __author__ = "AmirHossein Zarei (A-z-exe)"
 
 __all__ = ["__version__", "__author__"]

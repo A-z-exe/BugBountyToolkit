@@ -19,6 +19,32 @@ class AttackPathTests(unittest.TestCase):
         self.assertEqual(chains[0]["severity"], "critical")
         self.assertIn("Exposed environment file (.env)", chains[0]["findings"])
 
+    def test_protected_low_findings_do_not_become_a_critical_chain(self):
+        # Regression: /.env returning 403 must not be reported as credential
+        # disclosure, let alone a critical attack path.
+        chains = build_attack_paths(
+            [_finding("Exposed environment file (.env) (access protected)", "low")]
+        )
+        self.assertEqual(chains, [])
+
+    def test_chain_severity_is_clamped_to_the_evidence(self):
+        chains = build_attack_paths(
+            [_finding("Exposed environment file (.env)", "high")]
+        )
+        credential = [c for c in chains if c["id"] == "credential-disclosure"][0]
+        self.assertEqual(credential["severity"], "high")
+
+    def test_https_findings_join_the_transport_chain(self):
+        chains = build_attack_paths(
+            [
+                _finding("HTTPS is available but not enforced", "high"),
+                _finding("Insecure cookie: SESSION", "high"),
+            ]
+        )
+        transport = [c for c in chains if c["id"] == "weak-transport"][0]
+        self.assertEqual(transport["severity"], "high")
+        self.assertEqual(len(transport["findings"]), 2)
+
     def test_xss_chain_requires_missing_headers(self):
         xss = _finding("Possible reflected XSS in parameter 'q'", "medium")
         headers = _finding("Missing security headers (6)", "medium")

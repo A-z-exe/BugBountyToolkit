@@ -21,6 +21,8 @@ fully in pure Python (only `requests` is required) and uses external tools such 
   exposed data stores, …) and each target gets a **risk score (0–100)**.
 - **Authenticated scanning** — `-H 'Name: Value'` and `--cookie 'name=value'` are
   applied to every request.
+- **Transport check** — detects HTTP-only sites and missing HTTP→HTTPS redirects,
+  and groups them with cookie/TLS issues in the attack-path report.
 - **Real bug fixes** (details in the changelog at the bottom):
   - public IPs/ranges are no longer misclassified as `local`;
   - `host:port` targets now probe HTTPS *and* HTTP;
@@ -47,7 +49,7 @@ an authenticated scan does not kill its own session.
 | --- | --- |
 | `info` | DNS resolution / reverse DNS, optional WHOIS + `dig`/`nslookup`, TLS certificate details |
 | `network` | Host discovery on a CIDR, TCP port scan, banner grabbing, risky-service flagging, optional nmap |
-| `web` | Same-origin crawl, security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404-aware content discovery |
+| `web` | Same-origin crawl, transport (HTTP→HTTPS), security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404-aware content discovery |
 | `api` | API documentation discovery, GraphQL introspection check, CORS, JWT analysis |
 | `injection` | Reflected XSS, error-based SQLi and open redirect on parameters discovered in the URL/crawl (time-based SQLi only with `--aggressive`) |
 
@@ -316,6 +318,8 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 ## 🧱 Known limitations
 
 - No JavaScript rendering: links generated only at runtime are not discovered.
+- Injection checks target GET parameters discovered by the crawler; POST forms
+  (login/signup/contact) must be tested manually or with a proxy.
 - Cookies/headers are static; there is no full login-flow or MFA handling.
 - TLS protocol support is probed with separate TLS 1.0/1.1 handshakes; whether they
   succeed can depend on the local OpenSSL build’s policy.
@@ -327,6 +331,15 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 ---
 
 ## 🗒️ Changelog
+
+### 2.1.1
+
+- Added an explicit HTTP/HTTPS transport check: HTTP-only sites and missing
+  HTTP→HTTPS redirects are now reported (high/medium).
+- Attack-path severity is clamped to the strongest supporting finding, so a
+  protected `/.env` returning 403 can no longer create a "critical" chain.
+- HTTPS/transport findings now join the transport/cookie attack path.
+- Test suite expanded to 60 tests.
 
 ### 2.1.0
 
@@ -345,7 +358,7 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 - Fixed `--no-optional-tools` being ignored for `nslookup`.
 - Fixed `--ports` validation and error messages.
 - Silent no-op scans now emit an explicit finding.
-- Added `pyproject.toml` (`pip install -e .`, `bbt` command) and 53 unit tests.
+- Added `pyproject.toml` (`pip install -e .`, `bbt` command) and 60 unit tests.
 - Added active TLS 1.0/1.1 probing and shared TLS inspection between modules.
 - The crawler skips logout-style GET links to protect authenticated sessions.
 - Windows consoles get ANSI colour enabled when possible.

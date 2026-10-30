@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from bbt.checks import (
     body_signature,
     check_cookies,
+    check_transport,
     clean_web_base,
     origin_of,
     probe_paths,
@@ -175,6 +176,51 @@ class WebEntryTests(unittest.TestCase):
         self.assertIsNone(base_url)
         self.assertIsNone(resp)
         self.assertEqual(seen, ["https://example.com/"])
+
+
+class TransportTests(unittest.TestCase):
+    def test_http_only_site_is_high_severity(self):
+        def handler(url, kwargs):
+            if url.startswith("https://"):
+                return None
+            return FakeResponse(200, "<html></html>", {})
+
+        findings = check_transport(
+            FakeContext(FakeHttp(handler)), "http://target/", "http"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "high")
+        self.assertIn("no HTTPS", findings[0].title)
+
+    def test_https_available_but_http_is_served(self):
+        def handler(url, kwargs):
+            return FakeResponse(200, "<html></html>", {})
+
+        findings = check_transport(
+            FakeContext(FakeHttp(handler)), "http://target/", "http"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "high")
+        self.assertIn("not enforced", findings[0].title)
+
+    def test_https_with_http_redirect_is_clean(self):
+        def handler(url, kwargs):
+            return FakeResponse(301, "", {"Location": "https://target/"})
+
+        findings = check_transport(
+            FakeContext(FakeHttp(handler)), "https://target/", "https"
+        )
+        self.assertEqual(findings, [])
+
+    def test_https_without_http_redirect_is_medium(self):
+        def handler(url, kwargs):
+            return FakeResponse(200, "<html></html>", {})
+
+        findings = check_transport(
+            FakeContext(FakeHttp(handler)), "https://target/", "https"
+        )
+        self.assertEqual(len(findings), 1)
+        self.assertEqual(findings[0].severity, "medium")
 
 
 if __name__ == "__main__":

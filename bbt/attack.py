@@ -17,6 +17,23 @@ from .findings import SEVERITIES, Finding
 _SEVERITY_RANK = {name: index for index, name in enumerate(SEVERITIES)}
 _WEIGHTS = {"critical": 40, "high": 20, "medium": 7, "low": 2, "info": 0}
 
+#: Rules need at least one finding at this severity before they are reported.
+#: Without this, a page that merely returns 403 for /.env could be turned into
+#: a "credential disclosure" chain.
+_MIN_EVIDENCE = {
+    "credential-disclosure": "high",
+    "unauthenticated-service": "high",
+    "sql-injection": "high",
+    "xss-without-csp": "medium",
+    "cors-data-theft": "medium",
+    "jwt-weakness": "medium",
+    "admin-surface": "medium",
+    "open-redirect": "medium",
+    "weak-transport": "medium",
+    "information-leak": "low",
+    "api-exposure": "low",
+}
+
 
 @dataclass(frozen=True)
 class _Rule:
@@ -192,6 +209,9 @@ _RULES: Sequence[_Rule] = (
         severity="medium",
         any_terms=(
             "login form served over plain http",
+            "served over plain http",
+            "https is available but not enforced",
+            "http is not redirected to https",
             "expired tls certificate",
             "outdated tls protocol negotiated",
             "self-signed tls certificate",
@@ -291,10 +311,17 @@ def build_attack_paths(findings: Iterable[Finding]) -> List[Dict[str, object]]:
         if not matched:
             continue
 
-        severity = rule.severity
-        for item in matched:
-            if _SEVERITY_RANK.get(item.severity, 4) < _SEVERITY_RANK.get(severity, 4):
-                severity = item.severity
+        most_severe = min(
+            matched, key=lambda item: _SEVERITY_RANK.get(item.severity, 4)
+        )
+        min_evidence = _MIN_EVIDENCE.get(rule.id, "info")
+        if _SEVERITY_RANK.get(most_severe.severity, 4) > _SEVERITY_RANK.get(
+            min_evidence, 4
+        ):
+            continue
+
+        # Never claim more impact than the strongest finding in the chain.
+        severity = most_severe.severity
 
         chains.append(
             {

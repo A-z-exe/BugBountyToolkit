@@ -267,6 +267,93 @@ def probe_paths(
 
 
 # ---------------------------------------------------------------------------
+# Transport (HTTP vs HTTPS)
+# ---------------------------------------------------------------------------
+
+
+def check_transport(ctx: ScanContext, url: str, scheme: str) -> List[Finding]:
+    """Check whether the site is available over HTTPS and enforces it."""
+    findings: List[Finding] = []
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return findings
+    timeout = min(ctx.config.timeout, 8.0)
+    path = parsed.path or "/"
+
+    if scheme == "http":
+        https_url = urlunparse(("https", parsed.netloc, path, "", "", ""))
+        https_resp = ctx.http.get(https_url, allow_redirects=False, timeout=timeout)
+        if https_resp is None:
+            findings.append(
+                Finding(
+                    title="Site is served over plain HTTP (no HTTPS)",
+                    severity="high",
+                    category="transport",
+                    target=url,
+                    description=(
+                        "The HTTPS endpoint did not respond. Credentials, session cookies "
+                        "and customer data can be intercepted or modified by anyone on the "
+                        "network path."
+                    ),
+                    evidence=f"TLS connection to {https_url} failed",
+                    remediation=(
+                        "Install a TLS certificate (e.g. Let's Encrypt), serve the site only "
+                        "over HTTPS, redirect HTTP to HTTPS with a 301 and enable HSTS."
+                    ),
+                    references=[
+                        "https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"
+                    ],
+                    confidence="high",
+                )
+            )
+        else:
+            findings.append(
+                Finding(
+                    title="HTTPS is available but not enforced",
+                    severity="high",
+                    category="transport",
+                    target=url,
+                    description=(
+                        "The site is still served over HTTP even though an HTTPS listener "
+                        "answers. Every request and the session cookie remain exposed."
+                    ),
+                    evidence=f"HTTPS endpoint responded with HTTP {https_resp.status_code}",
+                    remediation=(
+                        "Redirect all HTTP traffic to HTTPS (301), update absolute URLs and "
+                        "set the Secure flag on session cookies."
+                    ),
+                    confidence="high",
+                )
+            )
+    elif scheme == "https":
+        http_url = urlunparse(("http", parsed.netloc, path, "", "", ""))
+        http_resp = ctx.http.get(http_url, allow_redirects=False, timeout=timeout)
+        if http_resp is not None:
+            location = http_resp.headers.get("Location", "")
+            redirected = http_resp.status_code in (301, 302, 307, 308) and location.lower().startswith(
+                "https://"
+            )
+            if not redirected:
+                findings.append(
+                    Finding(
+                        title="HTTP is not redirected to HTTPS",
+                        severity="medium",
+                        category="transport",
+                        target=http_url,
+                        description=(
+                            "The plain-HTTP version of the site answers without redirecting "
+                            "to HTTPS, so users can be downgraded."
+                        ),
+                        evidence=f"HTTP {http_resp.status_code}"
+                        + (f" -> {location}" if location else ""),
+                        remediation="Return a 301 redirect from http:// to https://.",
+                        confidence="high",
+                    )
+                )
+    return findings
+
+
+# ---------------------------------------------------------------------------
 # Security headers
 # ---------------------------------------------------------------------------
 

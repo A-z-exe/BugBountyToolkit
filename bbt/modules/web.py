@@ -11,6 +11,7 @@ from ..checks import (
     check_http_methods,
     check_security_headers,
     check_tls,
+    check_transport,
     establish_baseline,
     origin_of,
     probe_paths,
@@ -69,6 +70,7 @@ class WebModule(BaseModule):
 
         findings.extend(check_security_headers(self.ctx, base_url, resp))
         findings.extend(check_cookies(self.ctx, base_url, resp, scheme=scheme))
+        findings.extend(check_transport(self.ctx, base_url, scheme))
 
         # CORS
         cors_findings, cors_data = check_cors(self.ctx, base_url)
