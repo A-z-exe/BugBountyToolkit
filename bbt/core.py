@@ -4,11 +4,12 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Type
+from typing import Dict, List, Sequence, Tuple, Type
 
+from .attack import build_attack_paths, risk_score
 from .config import Config
 from .context import ScanContext
-from .findings import FindingsStore
+from .findings import Finding, FindingsStore
 from .http_client import HttpClient
 from .modules.api import ApiModule
 from .modules.base import BaseModule
@@ -46,18 +47,35 @@ class Scanner:
         self.ui = ui
         self.log = logger
         self.rate_limiter = RateLimiter(config.rate)
+        self._class_cache: Dict[str, str] = {}
 
     # ------------------------------------------------------------------
     def classify(self, target: Target) -> str:
-        """Return 'local' or 'remote' for a target."""
-        if target.kind in ("ip", "cidr"):
-            return "local"
-        if target.is_private:
-            return "local"
-        addresses = resolve_host(target.host)
-        if addresses and any(is_private_ip(ip) for ip in addresses):
-            return "local"
-        return "remote"
+        """Return 'local' or 'remote' for a target.
+
+        Public IPs and ranges are *remote* even though they are literal
+        addresses. Only RFC1918/loopback/link-local assets, or hostnames that
+        resolve to them, are local.
+        """
+        cached = self._class_cache.get(target.raw)
+        if cached is not None:
+            return cached
+
+        if target.kind == "cidr":
+            kind = "local" if target.is_private else "remote"
+        elif target.kind == "ip":
+            kind = "local" if is_private_ip(target.host) else "remote"
+        elif target.is_private:
+            kind = "local"
+        else:
+            addresses = resolve_host(target.host)
+            if addresses and any(is_private_ip(ip) for ip in addresses):
+                kind = "local"
+            else:
+                kind = "remote"
+
+        self._class_cache[target.raw] = kind
+        return kind
 
     def order_targets(self, targets: Sequence[Target]) -> List[Target]:
         local: List[Target] = []
@@ -78,7 +96,10 @@ class Scanner:
     def scan(self, targets: Sequence[Target], mode: str) -> Path:
         ordered = self.order_targets(targets)
         if not ordered:
-            raise ValueError("no targets remain after applying the scope filter")
+            raise ValueError(
+                "no targets remain after applying the scope filter "
+                f"(--scope {self.config.scope})"
+            )
 
         session_dir = self.config.output_root / f"scan_{now_stamp()}"
         session_dir.mkdir(parents=True, exist_ok=True)
@@ -116,13 +137,18 @@ class Scanner:
 
         started = time.monotonic()
         ran: List[str] = []
+        skipped: List[Tuple[str, str]] = []
         try:
             for module_cls in modules_for_mode(mode):
                 module = module_cls(ctx)
                 if not module.applies(target):
+                    skipped.append((module.name, "not applicable to this target type"))
                     self.log.debug("module %s does not apply to %s", module.name, target.display)
                     continue
                 if not module.enabled():
+                    skipped.append(
+                        (module.name, "missing tools: " + ", ".join(module.missing_tools()))
+                    )
                     self.ui.warn(
                         f"Skipping {module.name} (missing tools: {', '.join(module.missing_tools())})"
                     )
@@ -137,23 +163,55 @@ class Scanner:
                 for finding in produced:
                     ctx.add_finding(finding)
                 ran.append(module.name)
+
+            if not ran:
+                reason = "; ".join(f"{name}: {why}" for name, why in skipped) or "no module produced results"
+                ctx.add_finding(
+                    Finding(
+                        title="No checks executed for this target",
+                        severity="info",
+                        category="scan",
+                        target=target.display,
+                        description=(
+                            f"Mode '{mode}' did not run any check against {target.kind} "
+                            f"target {target.display!r}. Reasons: {reason}."
+                        ),
+                        remediation=(
+                            "Use a URL or host target for web/API/injection checks. "
+                            "For a URL in network mode add --scan-network, and for a CIDR "
+                            "use the network module."
+                        ),
+                        confidence="high",
+                    )
+                )
+                self.ui.warn(
+                    f"No checks ran for {target.display} in mode {mode}. "
+                    "Check the target type and mode (see report)."
+                )
         finally:
             duration = time.monotonic() - started
-            md_path, json_path = write_reports(ctx, mode, duration)
-            http.close()
+            try:
+                md_path, json_path = write_reports(ctx, mode, duration)
+            finally:
+                http.close()
 
+        chains = build_attack_paths(findings)
+        score = risk_score(findings, chains)
         self.ui.ok(
-            f"Finished in {duration:.1f}s - {len(findings)} finding(s). "
-            f"Report: {md_path}"
+            f"Finished in {duration:.1f}s - {len(findings)} finding(s), "
+            f"risk score {score}/100. Report: {md_path}"
         )
         return {
             "target": target.to_dict(),
             "scope": self.classify(target),
             "mode": mode,
             "modules": ran,
+            "skipped": [{"module": name, "reason": why} for name, why in skipped],
             "duration_seconds": round(duration, 2),
             "counts": findings.counts(),
             "total_findings": len(findings),
+            "risk_score": score,
+            "attack_paths": chains,
             "report": str(md_path),
             "summary": str(json_path),
         }

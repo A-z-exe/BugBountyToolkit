@@ -26,6 +26,17 @@ class ScanContext:
     http: HttpClient
     findings: FindingsStore
     artifacts: Dict[str, str] = field(default_factory=dict)
+    #: Shared per-target state (resolved web base URL, crawl results, ...).
+    state: Dict[str, Any] = field(default_factory=dict)
+
+    # ------------------------------------------------------------------
+    def remember(self, key: str, value: Any) -> Any:
+        """Store a value that later modules for the same target can reuse."""
+        self.state[key] = value
+        return value
+
+    def recall(self, key: str, default: Any = None) -> Any:
+        return self.state.get(key, default)
 
     # ------------------------------------------------------------------
     def artifact(self, name: str) -> Path:

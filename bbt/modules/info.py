@@ -40,13 +40,14 @@ class InfoModule(BaseModule):
         else:
             self.ui.warn(f"Could not resolve {host}")
 
-        # Optional richer DNS via dig / nslookup when available.
-        if self.config.use_optional_tools and have_tool("dig"):
-            result = run_command(["dig", "+short", host], timeout=self.config.command_timeout)
-            dns_info["dig"] = (result.get("stdout") or "").strip()
-        elif have_tool("nslookup"):
-            result = run_command(["nslookup", host], timeout=self.config.command_timeout)
-            dns_info["nslookup"] = (result.get("stdout") or "").strip()
+        # Optional richer DNS via dig / nslookup when available and allowed.
+        if self.config.use_optional_tools:
+            if have_tool("dig"):
+                result = run_command(["dig", "+short", host], timeout=self.config.command_timeout)
+                dns_info["dig"] = (result.get("stdout") or "").strip()
+            elif have_tool("nslookup"):
+                result = run_command(["nslookup", host], timeout=self.config.command_timeout)
+                dns_info["nslookup"] = (result.get("stdout") or "").strip()
 
         self.ctx.write_json("dns_info.json", dns_info, key="dns_info")
 
@@ -82,19 +83,21 @@ class InfoModule(BaseModule):
 
         # TLS certificate (pure Python). Only attempt when TLS is plausible.
         tls_port = target.port or 443
-        is_tls = target.scheme == "https" or tls_port in (443, 8443, 9443)
-        if not is_tls:
-            self.ui.info("Target is not HTTPS; skipping TLS certificate inspection")
+        if not target.is_tls_likely:
+            self.ui.info("Target does not look like HTTPS; skipping certificate inspection")
         else:
             self.ui.info(f"Inspecting TLS certificate on {host}:{tls_port} ...")
             cert = get_certificate_info(host, tls_port, timeout=self.config.connect_timeout + 2)
             self.ctx.write_json("tls_certificate.json", cert, key="tls")
             if cert.get("ok"):
+                self.ctx.remember(
+                    "tls_cert", {"host": host, "port": tls_port, "info": cert}
+                )
                 self.ui.ok(
                     f"Certificate expires: {cert.get('not_after')} "
                     f"({cert.get('days_remaining')} days)"
                 )
-                tls_findings, _ = check_tls(self.ctx, host, tls_port)
+                tls_findings, _ = check_tls(self.ctx, host, tls_port, cert_info=cert)
                 findings.extend(tls_findings)
             else:
                 self.ui.warn(f"TLS inspection failed: {cert.get('error')}")

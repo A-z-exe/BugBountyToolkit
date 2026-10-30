@@ -3,24 +3,21 @@ from __future__ import annotations
 
 import argparse
 import os
-import sys
 from pathlib import Path
-from typing import List, Optional, Sequence
+from typing import Dict, List, Optional, Sequence
 
 from . import __version__
 from .config import MODES, Config
 from .core import Scanner
 from .target import Target, load_targets_file, parse_target
 from .ui import UI, print_banner, setup_logging
-from .utils import have_tool, platform_name, python_ok
+from .utils import have_tool, parse_ports, platform_name, python_ok
 
 OPTIONAL_TOOLS = {
     "nmap": "service/version detection during network scans",
-    "nikto": "additional web server checks",
     "subfinder": "passive subdomain discovery",
     "whois": "domain registration data",
     "dig": "detailed DNS records",
-    "sqlmap": "advanced SQL injection testing (manual, optional)",
 }
 
 LEGAL_TEXT = """
@@ -57,7 +54,13 @@ def check_tools(ui: UI) -> bool:
 def validate_legal(ui: UI) -> None:
     print(LEGAL_TEXT)
     while True:
-        answer = input("Do you agree to use this tool only for authorized testing? (yes/no): ").strip().lower()
+        try:
+            answer = input(
+                "Do you agree to use this tool only for authorized testing? (yes/no): "
+            ).strip().lower()
+        except (EOFError, KeyboardInterrupt):
+            ui.error("Authorization not confirmed (no interactive input). Exiting.")
+            raise SystemExit(2) from None
         if answer in ("yes", "y"):
             return
         if answer in ("no", "n"):
@@ -66,7 +69,42 @@ def validate_legal(ui: UI) -> None:
         ui.warn("Please answer 'yes' or 'no'.")
 
 
-def build_config(args: argparse.Namespace) -> Config:
+def parse_headers(values: Optional[Sequence[str]]) -> Dict[str, str]:
+    """Parse repeated ``-H 'Name: Value'`` options."""
+    headers: Dict[str, str] = {}
+    for item in values or []:
+        name, sep, value = str(item).partition(":")
+        if not sep or not name.strip():
+            raise ValueError(
+                f"invalid header {item!r}: expected 'Name: Value'"
+            )
+        headers[name.strip()] = value.strip()
+    return headers
+
+
+def parse_cookies(values: Optional[Sequence[str]]) -> Dict[str, str]:
+    """Parse repeated ``--cookie 'name=value'`` options (``a=1; b=2`` works)."""
+    cookies: Dict[str, str] = {}
+    for chunk in values or []:
+        for part in str(chunk).split(";"):
+            part = part.strip()
+            if not part:
+                continue
+            name, sep, value = part.partition("=")
+            if not sep or not name.strip():
+                raise ValueError(
+                    f"invalid cookie {part!r}: expected 'name=value'"
+                )
+            cookies[name.strip()] = value.strip()
+    return cookies
+
+
+def build_config(
+    args: argparse.Namespace,
+    headers: Optional[Dict[str, str]] = None,
+    cookies: Optional[Dict[str, str]] = None,
+) -> Config:
+    max_pages = 0 if getattr(args, "no_crawl", False) else args.max_pages
     return Config(
         timeout=args.timeout,
         connect_timeout=args.connect_timeout,
@@ -75,6 +113,8 @@ def build_config(args: argparse.Namespace) -> Config:
         rate=args.rate,
         verify_tls=args.verify_tls,
         proxy=args.proxy,
+        headers=dict(headers or {}),
+        cookies=dict(cookies or {}),
         scope=args.scope,
         max_hosts=args.max_hosts,
         scan_network=args.scan_network,
@@ -82,6 +122,10 @@ def build_config(args: argparse.Namespace) -> Config:
         use_optional_tools=not args.no_optional_tools,
         wordlist=args.wordlist,
         max_paths=args.max_paths,
+        max_pages=max_pages,
+        crawl_depth=args.crawl_depth,
+        max_injection_urls=args.max_injection_urls,
+        max_injection_params=args.max_injection_params,
         aggressive=args.aggressive,
         output_root=Path(args.output),
         no_color=args.no_color,
@@ -94,7 +138,14 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         prog="bugbounty_tool.py",
         description="Cross-platform security assessment for internal networks and web apps.",
-        epilog="Example: python bugbounty_tool.py -t https://example.com -m full",
+        epilog=(
+            "Examples:\n"
+            "  python bugbounty_tool.py -t https://example.com -m full\n"
+            "  python bugbounty_tool.py -t https://example.com -m web "
+            "-H 'Authorization: Bearer ...' --cookie 'session=...'\n"
+            "  python bugbounty_tool.py -t 192.168.1.0/24 -m network"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("-t", "--target", action="append", default=[],
                         help="Target: URL, host, IP or CIDR. Repeatable.")
@@ -107,7 +158,7 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--scan-network", action="store_true",
                         help="Also TCP-scan the host behind each URL target.")
     parser.add_argument("--ports", help="Port spec, e.g. '22,80,443,8000-8100'.")
-    parser.add_argument("--threads", type=int, default=64, help="Worker threads (default 64).")
+    parser.add_argument("--threads", type=int, default=64, help="Worker threads for network scans (default 64).")
     parser.add_argument("--rate", type=float, default=30.0, help="HTTP requests/second (0 = unlimited).")
     parser.add_argument("--timeout", type=float, default=15.0, help="HTTP timeout in seconds.")
     parser.add_argument("--connect-timeout", type=float, default=3.0, help="TCP connect timeout in seconds.")
@@ -115,6 +166,19 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--wordlist", help="Custom wordlist for content discovery.")
     parser.add_argument("--max-paths", type=int, default=400, help="Max paths to probe per target.")
     parser.add_argument("--max-hosts", type=int, default=1024, help="Max hosts to expand from a CIDR.")
+    parser.add_argument("--max-pages", type=int, default=25,
+                        help="Max pages to crawl per target (0 disables crawling, default 25).")
+    parser.add_argument("--crawl-depth", type=int, default=2,
+                        help="Crawl link depth (default 2).")
+    parser.add_argument("--no-crawl", action="store_true", help="Disable same-origin crawling.")
+    parser.add_argument("--max-injection-urls", type=int, default=10,
+                        help="Max crawled parameterised URLs to test (default 10).")
+    parser.add_argument("--max-injection-params", type=int, default=6,
+                        help="Max parameters per URL to test (default 6).")
+    parser.add_argument("-H", "--header", action="append", default=[],
+                        help="Extra HTTP header 'Name: Value'. Repeatable.")
+    parser.add_argument("--cookie", action="append", default=[],
+                        help="Cookie(s) 'name=value' (separate multiple with ';'). Repeatable.")
     parser.add_argument("--jwt", action="append", help="JWT/bearer token to analyse. Repeatable.")
     parser.add_argument("--proxy", help="Proxy URL for HTTP(S) requests.")
     parser.add_argument("--verify-tls", action="store_true", help="Verify TLS certificates (default: off).")
@@ -154,7 +218,7 @@ def interactive(config: Config, ui: UI, logger) -> int:
         "  BBT - Security Assessment Menu\n" + "=" * 60 + "\n"
         "  1. Information gathering (DNS/WHOIS/TLS)\n"
         "  2. Network scan (ports/services)\n"
-        "  3. Web assessment\n"
+        "  3. Web assessment (crawl + checks)\n"
         "  4. API review\n"
         "  5. Injection checks\n"
         "  6. Full scan (local assets first, then remote)\n"
@@ -187,9 +251,12 @@ def interactive(config: Config, ui: UI, logger) -> int:
             ui.warn("No valid targets provided.")
             continue
         try:
-            scanner.scan(targets, mode_map[choice])
+            session_dir = scanner.scan(targets, mode_map[choice])
+            ui.ok(f"Reports: {session_dir}")
         except ValueError as exc:
             ui.error(str(exc))
+        except OSError as exc:
+            ui.error(f"Scan failed: {exc}")
         except KeyboardInterrupt:
             ui.warn("Interrupted.")
 
@@ -209,10 +276,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ui.error("The 'requests' package is required. Install it with: pip install -r requirements.txt")
         return 2
 
+    # Validate user supplied options before the legal prompt / any scan.
+    try:
+        headers = parse_headers(args.header)
+        cookies = parse_cookies(args.cookie)
+        if args.ports:
+            parse_ports(args.ports)
+    except ValueError as exc:
+        ui.error(str(exc))
+        return 2
+
     if not (args.skip_legal or os.environ.get("BBT_SKIP_LEGAL")):
         validate_legal(ui)
 
-    config = build_config(args)
+    config = build_config(args, headers=headers, cookies=cookies)
     config.output_root.mkdir(parents=True, exist_ok=True)
     logger = setup_logging(verbose=args.verbose, logfile=config.output_root / "bbt.log")
     logger.info("BBT %s on %s", __version__, platform_name())
@@ -243,6 +320,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             session_dir = scanner.scan(targets, args.mode)
         except ValueError as exc:
             ui.error(str(exc))
+            return 2
+        except OSError as exc:
+            ui.error(f"Scan failed: {exc}")
             return 2
         except KeyboardInterrupt:
             ui.warn("Scan interrupted by user.")

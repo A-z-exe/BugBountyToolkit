@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import base64
 import json
-from typing import Dict, List, Optional, Tuple
+from typing import List, Optional, Tuple
 
-from ..checks import check_cors, establish_baseline, probe_paths
+from ..checks import check_cors, establish_baseline, probe_paths, resolve_web_entry
 from ..findings import Finding
 from ..target import Target
 from .base import BaseModule
@@ -34,19 +34,33 @@ class ApiModule(BaseModule):
     required_tools = ()
 
     def applies(self, target: Target) -> bool:
-        return target.kind == "url"
+        return target.is_web
 
     # ------------------------------------------------------------------
     def run(self, target: Target) -> List[Finding]:
         findings: List[Finding] = []
-        base_url = target.origin + (target.path if target.path != "/" else "/")
+        base_url, _resp = resolve_web_entry(self.ctx, target)
+        if not base_url and target.kind == "url":
+            base_url = target.base_url
+        if not base_url:
+            return [
+                Finding(
+                    title="API service unreachable",
+                    severity="info",
+                    category="api",
+                    target=target.display,
+                    description="No HTTP(S) service responded, so API checks were skipped.",
+                    confidence="low",
+                )
+            ]
 
         findings.extend(self._discover_docs(base_url))
         findings.extend(self._graphql_check(base_url))
 
         cors_findings, cors_data = check_cors(self.ctx, base_url)
         findings.extend(cors_findings)
-        self.ctx.write_json("cors_analysis.json", cors_data, key="cors")
+        # Keep the API CORS evidence separate from the web module's file.
+        self.ctx.write_json("api_cors_analysis.json", cors_data, key="api_cors")
 
         for token in self.config.tokens:
             findings.extend(self._analyze_jwt(token))

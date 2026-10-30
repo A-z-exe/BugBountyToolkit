@@ -7,7 +7,7 @@ returns ``None`` instead of raising, so modules can stay readable.
 from __future__ import annotations
 
 import logging
-from typing import Dict, Optional
+from typing import Optional
 
 import requests
 
@@ -44,6 +44,10 @@ class HttpClient:
         )
         if config.proxy:
             self.session.proxies.update({"http": config.proxy, "https": config.proxy})
+        if config.headers:
+            self.session.headers.update(config.headers)
+        if config.cookies:
+            self.session.cookies.update(config.cookies)
         adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)

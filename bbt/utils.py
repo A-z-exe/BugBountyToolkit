@@ -288,26 +288,40 @@ def expand_cidr(cidr: str, max_hosts: int = 1024) -> List[str]:
 
 
 def parse_ports(spec: Optional[str], default: Optional[Iterable[int]] = None) -> List[int]:
-    """Parse ``"22,80,8000-8010"`` into a sorted list of valid ports."""
+    """Parse ``"22,80,8000-8010"`` into a sorted list of valid ports.
+
+    Raises :class:`ValueError` with a human readable message for bad input so
+    the CLI can fail before a scan starts instead of mid-run.
+    """
     ports = set()
     if spec:
         for chunk in spec.split(","):
             chunk = chunk.strip()
             if not chunk:
                 continue
-            if "-" in chunk:
-                start, _, end = chunk.partition("-")
-                start, end = int(start), int(end)
-                if start > end:
-                    start, end = end, start
-                if end - start > 65535:
-                    raise ValueError(f"invalid port range: {chunk}")
-                ports.update(range(start, end + 1))
-            else:
-                ports.add(int(chunk))
+            try:
+                if "-" in chunk:
+                    start_s, _, end_s = chunk.partition("-")
+                    start, end = int(start_s), int(end_s)
+                    if start > end:
+                        start, end = end, start
+                    if end - start > 65535:
+                        raise ValueError
+                    ports.update(range(start, end + 1))
+                else:
+                    ports.add(int(chunk))
+            except ValueError:
+                raise ValueError(
+                    f"invalid port specification {chunk!r} "
+                    "(expected e.g. 80, 443 or 8000-8100)"
+                ) from None
     elif default:
         ports.update(int(p) for p in default)
-    return sorted(p for p in ports if 1 <= p <= 65535)
+
+    ports = {p for p in ports if 1 <= p <= 65535}
+    if spec and not ports:
+        raise ValueError(f"port specification {spec!r} contains no valid ports")
+    return sorted(ports)
 
 
 def service_name(port: int) -> str:

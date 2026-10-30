@@ -1,9 +1,11 @@
-# Core requirement. Everything else is optional.
+# Runtime requirement. Everything else is optional.
 requests>=2.25.0
 
+# Development / test tools (optional):
+#   pip install -e ".[dev]"      # installs pytest + ruff
+#
 # Optional external tools (install separately, detected automatically):
 #   nmap       - richer network service/version detection
-#   nikto      - extra web server checks
 #   subfinder  - passive subdomain discovery
 #   whois      - domain registration data
-#   sqlmap     - advanced/manual SQL injection testing
+#   dig        - detailed DNS records

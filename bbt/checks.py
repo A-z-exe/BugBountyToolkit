@@ -4,9 +4,74 @@ from __future__ import annotations
 import hashlib
 import re
 from typing import Dict, List, Optional, Tuple
+from urllib.parse import urlparse, urlunparse
 
 from .context import ScanContext
 from .findings import Finding
+from .target import Target
+
+# ---------------------------------------------------------------------------
+# Entry point resolution
+# ---------------------------------------------------------------------------
+
+
+def clean_web_base(url: str) -> str:
+    """Normalize a URL into a base without query/fragment/trailing slash."""
+    parsed = urlparse(url)
+    if not parsed.scheme or not parsed.netloc:
+        return url
+    path = parsed.path or "/"
+    if path != "/":
+        path = path.rstrip("/") or "/"
+    return urlunparse((parsed.scheme, parsed.netloc, path, "", "", ""))
+
+
+def origin_of(url: str) -> str:
+    """Return ``scheme://host[:port]`` for a URL (no trailing slash)."""
+    parsed = urlparse(url)
+    if parsed.scheme and parsed.netloc:
+        return f"{parsed.scheme}://{parsed.netloc}"
+    return url.rstrip("/")
+
+
+def resolve_web_entry(
+    ctx: ScanContext, target: Target
+) -> Tuple[Optional[str], Optional[object]]:
+    """Find a URL that actually answers HTTP(S) for this target.
+
+    * An explicit ``https://``/``http://`` target is used as typed.
+    * A bare ``host``/``ip`` (optionally with a port) is probed with HTTPS
+      first and plain HTTP second, because internal apps are often HTTP-only.
+
+    The result is cached per target so modules do not repeat the handshake.
+    """
+    cached = ctx.recall("web_entry")
+    if cached:
+        return cached.get("url"), cached.get("response")
+
+    if target.kind == "url":
+        candidates = [target.url_with_query]
+    else:
+        candidates = [
+            f"{scheme}://{target.authority}/" for scheme in target.web_schemes
+        ]
+
+    for url in candidates:
+        # Scheme probing should not hang for a full HTTP timeout on a dead port.
+        timeout = ctx.config.timeout if target.explicit_scheme else min(
+            ctx.config.timeout, 8.0
+        )
+        resp = ctx.http.get(url, timeout=timeout)
+        if resp is None:
+            continue
+        base = clean_web_base(resp.url or url)
+        if not base.startswith(("http://", "https://")):
+            base = clean_web_base(url)
+        ctx.remember("web_entry", {"url": base, "response": resp})
+        ctx.remember("web_scheme", urlparse(base).scheme)
+        return base, resp
+    return None, None
+
 
 # ---------------------------------------------------------------------------
 # Path probing
@@ -64,13 +129,31 @@ def establish_baseline(ctx: ScanContext, base_url: str) -> Dict[str, object]:
     if resp is None:
         return {"status": None, "length": 0, "hash": "", "ok": False}
     length, digest = body_signature(resp.text)
-    return {"status": resp.status_code, "length": length, "hash": digest, "ok": True}
+    return {
+        "status": resp.status_code,
+        "length": length,
+        "hash": digest,
+        "content_type": resp.headers.get("Content-Type", ""),
+        "ok": True,
+    }
 
 
-def _is_baseline_like(baseline: Dict[str, object], status: int, length: int, digest: str) -> bool:
+def _is_baseline_like(
+    baseline: Dict[str, object],
+    status: int,
+    length: int,
+    digest: str,
+    content_type: str = "",
+) -> bool:
     if not baseline.get("ok"):
         return False
     if status != baseline.get("status"):
+        return False
+    base_type = str(baseline.get("content_type") or "").split(";")[0].strip().lower()
+    hit_type = str(content_type or "").split(";")[0].strip().lower()
+    # A different media type is a strong signal that this is real content and
+    # not the site's generic soft-404 page.
+    if base_type and hit_type and base_type != hit_type:
         return False
     base_len = int(baseline.get("length") or 0)
     if digest and digest == baseline.get("hash"):
@@ -102,11 +185,18 @@ def probe_paths(
         status = resp.status_code
         length, digest = body_signature(resp.text)
 
-        if status in (404,) and path not in SENSITIVE_PATHS:
+        # A 404/410 is never an interesting hit, even for a sensitive path.
+        if status in (404, 410):
             continue
         if status not in _INTERESTING_STATUSES and path not in SENSITIVE_PATHS:
             continue
-        if _is_baseline_like(baseline, status, length, digest):
+        if _is_baseline_like(
+            baseline,
+            status,
+            length,
+            digest,
+            resp.headers.get("Content-Type", ""),
+        ):
             continue
 
         hit = {
@@ -192,9 +282,7 @@ SECURITY_HEADERS = {
 _INFO_LEAK_HEADERS = ["Server", "X-Powered-By", "X-AspNet-Version", "X-Generator"]
 
 
-def check_security_headers(
-    ctx: ScanContext, url: str, resp, scheme: str = "https"
-) -> List[Finding]:
+def check_security_headers(ctx: ScanContext, url: str, resp) -> List[Finding]:
     findings: List[Finding] = []
     headers = {k.lower(): v for k, v in resp.headers.items()}
 
@@ -232,6 +320,21 @@ def check_security_headers(
     return findings
 
 
+# ---------------------------------------------------------------------------
+# Cookies
+# ---------------------------------------------------------------------------
+
+
+def _cookie_attributes(cookie) -> Dict[str, object]:
+    """Return cookie extension attributes with lower-cased names.
+
+    ``http.cookiejar`` keeps the case used on the wire, so ``HttpOnly``,
+    ``HTTPOnly`` and ``httponly`` must all be treated as the same flag.
+    """
+    rest = getattr(cookie, "_rest", None) or {}
+    return {str(key).lower(): value for key, value in rest.items()}
+
+
 def check_cookies(ctx: ScanContext, url: str, resp, scheme: str = "https") -> List[Finding]:
     findings: List[Finding] = []
     cookies = getattr(resp, "cookies", None)
@@ -239,12 +342,12 @@ def check_cookies(ctx: ScanContext, url: str, resp, scheme: str = "https") -> Li
         return findings
     for cookie in cookies:
         issues = []
-        if not cookie.secure and scheme == "https":
+        attributes = _cookie_attributes(cookie)
+        if not cookie.secure:
             issues.append("missing Secure flag")
-        if not cookie.has_nonstandard_attr("HttpOnly"):
+        if "httponly" not in attributes:
             issues.append("missing HttpOnly flag")
-        samesite = cookie.get_nonstandard_attr("SameSite")
-        if samesite is None:
+        if "samesite" not in attributes:
             issues.append("missing SameSite attribute")
         if not issues:
             continue
@@ -311,6 +414,18 @@ def check_cors(ctx: ScanContext, url: str) -> Tuple[List[Finding], Dict[str, obj
                     references=["https://portswigger.net/web-security/cors"],
                 )
             )
+        elif reflected and origin == "null":
+            findings.append(
+                Finding(
+                    title="CORS: 'null' origin allowed",
+                    severity="medium",
+                    category="cors",
+                    target=url,
+                    description="The 'null' origin is accepted, which can be abused via sandboxed iframes.",
+                    evidence=f"Origin: null -> Access-Control-Allow-Origin: {acao}",
+                    remediation="Reject the 'null' origin and validate Origin against an allowlist.",
+                )
+            )
         elif reflected:
             findings.append(
                 Finding(
@@ -335,18 +450,6 @@ def check_cors(ctx: ScanContext, url: str) -> Tuple[List[Finding], Dict[str, obj
                     remediation="Use explicit origins when credentials are required.",
                 )
             )
-        elif origin == "null" and reflected:
-            findings.append(
-                Finding(
-                    title="CORS: 'null' origin allowed",
-                    severity="medium",
-                    category="cors",
-                    target=url,
-                    description="The 'null' origin is accepted, which can be abused via sandboxed iframes.",
-                    evidence=f"Origin: null -> ACAO: {acao}",
-                    remediation="Reject the 'null' origin.",
-                )
-            )
     return findings, results
 
 
@@ -366,8 +469,8 @@ def check_http_methods(ctx: ScanContext, url: str) -> Tuple[List[Finding], Dict[
     results["allow"] = allow
 
     if allow:
-        dangerous = [m.strip().upper() for m in allow.split(",") if m.strip()]
-        risky = [m for m in dangerous if m in ("PUT", "DELETE", "TRACE", "CONNECT", "PATCH")]
+        methods = [m.strip().upper() for m in allow.split(",") if m.strip()]
+        risky = [m for m in methods if m in ("PUT", "DELETE", "TRACE", "CONNECT", "PATCH")]
         if risky:
             findings.append(
                 Finding(
@@ -403,18 +506,44 @@ def check_http_methods(ctx: ScanContext, url: str) -> Tuple[List[Finding], Dict[
 # ---------------------------------------------------------------------------
 
 
-def check_tls(ctx: ScanContext, host: str, port: int) -> Tuple[List[Finding], Dict[str, object]]:
+def check_tls(
+    ctx: ScanContext,
+    host: str,
+    port: int,
+    cert_info: Optional[Dict[str, object]] = None,
+) -> Tuple[List[Finding], Dict[str, object]]:
     from .crypto import get_certificate_info
 
     findings: List[Finding] = []
-    info = get_certificate_info(host, port, timeout=ctx.config.connect_timeout + 2)
+    info = cert_info or get_certificate_info(
+        host, port, timeout=ctx.config.connect_timeout + 2
+    )
     if not info.get("ok"):
         # If TLS fails entirely on a URL the user said was https, that's notable.
         return findings, info
 
-    subject = info.get("subject", {})
-    issuer = info.get("issuer", {})
-    if subject and subject == issuer:
+    if info.get("ok") and info.get("decoded") is False:
+        findings.append(
+            Finding(
+                title="TLS certificate could not be fully decoded",
+                severity="info",
+                category="tls",
+                target=f"{host}:{port}",
+                description=(
+                    "The TLS handshake worked but this Python runtime could not decode "
+                    "the certificate, so expiry/subject checks were limited."
+                ),
+                evidence=f"error: {info.get('decode_error', 'unknown')}",
+                confidence="high",
+            )
+        )
+
+    subject = info.get("subject") or {}
+    issuer = info.get("issuer") or {}
+    self_signed = bool(info.get("self_signed"))
+    if not self_signed and subject and subject == issuer:
+        self_signed = True
+    if self_signed:
         findings.append(
             Finding(
                 title="Self-signed TLS certificate",
@@ -426,6 +555,7 @@ def check_tls(ctx: ScanContext, host: str, port: int) -> Tuple[List[Finding], Di
                 remediation="Use a certificate issued by a trusted CA.",
             )
         )
+
     days = info.get("days_remaining")
     if isinstance(days, int):
         if days < 0:
@@ -464,6 +594,24 @@ def check_tls(ctx: ScanContext, host: str, port: int) -> Tuple[List[Finding], Di
                 description="An outdated and insecure TLS/SSL protocol version was negotiated.",
                 evidence=f"Protocol: {protocol}",
                 remediation="Disable TLS 1.0/1.1 and SSLv2/3; require TLS 1.2+.",
+            )
+        )
+
+    legacy = info.get("legacy_protocols") or []
+    if legacy:
+        findings.append(
+            Finding(
+                title="Legacy TLS protocol support enabled: " + ", ".join(legacy),
+                severity="medium",
+                category="tls",
+                target=f"{host}:{port}",
+                description=(
+                    "The server still accepts deprecated TLS versions that are "
+                    "vulnerable to downgrade and known protocol weaknesses."
+                ),
+                evidence="Accepted: " + ", ".join(legacy),
+                remediation="Require TLS 1.2 or newer at the load balancer/server.",
+                references=["https://cheatsheetseries.owasp.org/cheatsheets/Transport_Layer_Security_Cheat_Sheet.html"],
             )
         )
     return findings, info

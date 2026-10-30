@@ -13,6 +13,17 @@ class UtilsTests(unittest.TestCase):
     def test_parse_ports_default(self):
         self.assertEqual(parse_ports(None, default=[80, 443]), [80, 443])
 
+    def test_parse_ports_invalid_specs_raise(self):
+        for spec in ("abc", "80-abc", "70000", "0"):
+            with self.assertRaises(ValueError):
+                parse_ports(spec)
+
+    def test_parse_ports_ignores_empty_chunks(self):
+        self.assertEqual(parse_ports("80,,443"), [80, 443])
+
+    def test_parse_ports_range_reversed(self):
+        self.assertEqual(parse_ports("443-441"), [441, 442, 443])
+
     def test_expand_cidr_small(self):
         hosts = expand_cidr("192.168.1.0/30", max_hosts=10)
         self.assertEqual(hosts, ["192.168.1.1", "192.168.1.2"])

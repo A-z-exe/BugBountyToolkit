@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bbt-toolkit"
+description = "Cross-platform security assessment toolkit for internal networks and web applications."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "AmirHossein Zarei (A-z-exe)" }]
+keywords = ["security", "bugbounty", "recon", "pentest", "scanner"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Topic :: Security",
+]
+dependencies = ["requests>=2.25.0"]
+dynamic = ["version"]
+
+[project.optional-dependencies]
+dev = ["pytest>=7", "ruff>=0.5"]
+
+[project.scripts]
+bbt = "bbt.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/A-z-exe/BugBountyToolkit"
+Repository = "https://github.com/A-z-exe/BugBountyToolkit"
+
+[tool.setuptools]
+packages = ["bbt", "bbt.modules"]
+
+[tool.setuptools.dynamic]
+version = { attr = "bbt.__version__" }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py38"
+line-length = 100
+src = ["."]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = ["E501"]

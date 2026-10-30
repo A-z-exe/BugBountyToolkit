@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+from . import __version__
+
 RESET = "\033[0m"
 BOLD = "\033[1m"
 DIM = "\033[2m"
@@ -27,14 +29,40 @@ _SEVERITY_COLOR = {
 }
 
 
+def _enable_windows_ansi() -> bool:
+    """Enable VT processing on classic Windows consoles (best effort)."""
+    if os.name != "nt":
+        return True
+    try:
+        import ctypes
+
+        kernel32 = ctypes.windll.kernel32  # type: ignore[attr-defined]
+        handle = kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+        mode = ctypes.c_uint32()
+        if not kernel32.GetConsoleMode(handle, ctypes.byref(mode)):
+            return False
+        ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004
+        return bool(
+            kernel32.SetConsoleMode(
+                handle, mode.value | ENABLE_VIRTUAL_TERMINAL_PROCESSING
+            )
+        )
+    except Exception:
+        return False
+
+
 def supports_color(stream=None) -> bool:
     if os.environ.get("NO_COLOR"):
         return False
     stream = stream or sys.stdout
     try:
-        return bool(stream.isatty())
+        if not stream.isatty():
+            return False
     except Exception:
         return False
+    if os.name == "nt" and stream is sys.stdout:
+        return _enable_windows_ansi()
+    return True
 
 
 class UI:
@@ -110,9 +138,9 @@ BANNER = r"""
    / __ )/ __ )_  __/     Advanced Security Assessment Toolkit
   / __  / __  |/ /       for internal networks and web applications
  / /_/ / /_/ / / /
-/_____/\____/ /_/        v2.0  -  github.com/A-z-exe
+/_____/\____/ /_/        v{version}  -  github.com/A-z-exe
 """
 
 
 def print_banner() -> None:
-    print(BANNER)
+    print(BANNER.format(version=__version__))

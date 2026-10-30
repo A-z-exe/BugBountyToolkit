@@ -2,13 +2,19 @@
 
 By default these checks only send benign probes. Time-based SQL injection is
 only attempted when ``--aggressive`` is set, because it sends intrusive payloads.
+
+Parameters are taken from the target URL and from URLs discovered by the
+crawler, instead of blasting a fixed list of guessed parameter names at every
+path. That keeps the noise (and the false-positive rate) down.
 """
 from __future__ import annotations
 
 import time
-from typing import Dict, List, Tuple
+from typing import Dict, List
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
+from ..checks import resolve_web_entry
+from ..crawl import crawl_site
 from ..findings import Finding
 from ..target import Target
 from .base import BaseModule
@@ -35,10 +41,6 @@ REDIRECT_PARAMS = {"redirect", "redirect_uri", "redirect_url", "next", "url",
                    "return", "returnurl", "return_url", "dest", "destination",
                    "continue", "target", "r", "u", "link", "out", "goto"}
 
-DEFAULT_PARAMS = ["id", "q", "search", "query", "page", "file", "path", "name",
-                  "user", "username", "email", "lang", "view", "debug", "test",
-                  "redirect", "url", "next"]
-
 
 class InjectionModule(BaseModule):
     name = "injection"
@@ -47,26 +49,68 @@ class InjectionModule(BaseModule):
     required_tools = ()
 
     def applies(self, target: Target) -> bool:
-        return target.kind == "url"
+        return target.is_web
 
     # ------------------------------------------------------------------
     def run(self, target: Target) -> List[Finding]:
-        parsed = urlparse(target.url_with_query)
-        existing = parse_qsl(parsed.query, keep_blank_values=True)
-
-        param_names = [name for name, _ in existing] or list(DEFAULT_PARAMS)
-        values = {name: value for name, value in existing}
+        base_url, _resp = resolve_web_entry(self.ctx, target)
+        if base_url is None:
+            return []
 
         findings: List[Finding] = []
-        self.ui.info(f"Testing {len(param_names)} parameter(s) for injection issues ...")
+        crawl = self.ctx.recall("crawl")
+        if crawl is None and self.config.max_pages > 0:
+            crawl = crawl_site(self.ctx, base_url)
+        crawl = crawl or {}
+        if crawl and "crawl" not in self.ctx.artifacts:
+            self.ctx.write_json("crawl.json", crawl, key="crawl")
 
-        for name in param_names:
-            base_value = values.get(name) or "1"
-            try:
-                findings.extend(self._test_param(parsed, values, name, base_value))
-            except Exception as exc:  # noqa: BLE001 - never abort the scan
-                self.log.debug("injection test failed for %s: %s", name, exc)
+        candidates: List[str] = []
+        if target.query:
+            candidates.append(target.url_with_query)
+        else:
+            candidates.append(base_url)
+        for url in (crawl.get("param_urls") or [])[: self.config.max_injection_urls]:
+            candidates.append(str(url))
 
+        # De-duplicate on (host, path, parameter name) so a crawled site with
+        # many links to the same endpoint is only tested once per parameter.
+        tested = set()
+        param_count = 0
+        for url in candidates:
+            parsed = urlparse(url)
+            values = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if not values:
+                continue
+            for name in list(values)[: self.config.max_injection_params]:
+                key = (parsed.netloc, parsed.path or "/", name)
+                if key in tested:
+                    continue
+                tested.add(key)
+                base_value = values.get(name) or "1"
+                try:
+                    findings.extend(self._test_param(parsed, values, name, base_value))
+                except Exception as exc:  # noqa: BLE001 - never abort the scan
+                    self.log.debug("injection test failed for %s: %s", name, exc)
+                param_count += 1
+
+        if param_count == 0:
+            findings.append(
+                Finding(
+                    title="No testable parameters discovered",
+                    severity="info",
+                    category="injection",
+                    target=base_url,
+                    description=(
+                        "The target URL and the crawled pages did not expose any query "
+                        "parameters, so XSS/SQLi probes were not sent. Provide a URL "
+                        "with parameters or increase --max-pages."
+                    ),
+                    confidence="high",
+                )
+            )
+        else:
+            self.ui.info(f"Tested {param_count} parameter(s) for injection issues")
         return findings
 
     # ------------------------------------------------------------------

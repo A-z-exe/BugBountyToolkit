@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .utils import DEFAULT_DIR_WORDS, DEFAULT_WEB_PATHS, TOP_PORTS
 
@@ -26,6 +26,7 @@ RISKY_PORTS = {
     1433: "MSSQL - exposed database, brute force",
     1521: "Oracle - exposed database",
     2375: "Docker API (plaintext) - full host takeover",
+    2376: "Docker API (TLS) - container control plane; verify mutual auth",
     3306: "MySQL - exposed database",
     3389: "RDP - brute force / BlueKeep",
     5432: "PostgreSQL - exposed database",
@@ -51,6 +52,10 @@ class Config:
     verify_tls: bool = False  # internal sites frequently use self-signed certs
     follow_redirects: bool = True
     proxy: Optional[str] = None
+    #: Extra headers applied to every request (authentication, custom UA, ...).
+    headers: Dict[str, str] = field(default_factory=dict)
+    #: Cookies parsed from ``--cookie name=value``.
+    cookies: Dict[str, str] = field(default_factory=dict)
 
     # Scope / target discovery
     scope: str = "auto"  # auto | local | remote
@@ -67,6 +72,12 @@ class Config:
     dir_words: List[str] = field(default_factory=lambda: list(DEFAULT_DIR_WORDS))
     max_paths: int = 400
 
+    # Same-origin crawling (feeds parameter discovery / injection tests)
+    max_pages: int = 25  # 0 disables crawling
+    crawl_depth: int = 2
+    max_injection_urls: int = 10
+    max_injection_params: int = 6
+
     # Safety
     aggressive: bool = False  # enables intrusive payloads (SQLi time-based, etc.)
 
@@ -82,3 +93,13 @@ class Config:
         self.output_root = Path(self.output_root)
         if not self.ports:
             self.ports = ",".join(str(p) for p in TOP_PORTS)
+        # Keep the tuning knobs in a sane range even if the CLI passes junk.
+        self.threads = max(1, int(self.threads))
+        self.max_hosts = max(1, int(self.max_hosts))
+        self.max_paths = max(0, int(self.max_paths))
+        self.max_pages = max(0, int(self.max_pages))
+        self.crawl_depth = max(1, int(self.crawl_depth))
+        self.max_injection_urls = max(0, int(self.max_injection_urls))
+        self.max_injection_params = max(0, int(self.max_injection_params))
+        if self.rate is not None and self.rate < 0:
+            self.rate = 0.0
