@@ -11,7 +11,22 @@ fully in pure Python (only `requests` is required) and uses external tools such 
 
 ---
 
-## ✨ What's new in 2.1
+## ✨ What's new in 2.2
+
+- **BOLA/IDOR checks with two accounts** — replay object endpoints from the
+  crawl/OpenAPI spec with a second account (`--header-b` / `--cookie-b`) and
+  compare responses. This mirrors the "successful auth ≠ authorized" challenge
+  class.
+- **SSRF probing (opt-in)** — inject a callback URL you control (`--ssrf-url`)
+  and benign internal targets into URL-like parameters, then look for internal
+  content or connection errors.
+- **WordPress review** — detects WordPress, core/plugin/theme versions, XML-RPC,
+  REST user enumeration and upload directory listing.
+- **OpenAPI parsing** — machine-readable specs are parsed into
+  `api_endpoints.json` and used to build authorization-test candidates.
+- New attack-path rules for SSRF, BOLA and WordPress issues.
+
+### From 2.1
 
 - **Same-origin crawler** — discovers links, forms and scripts (bounded by
   `--max-pages` / `--crawl-depth`) and feeds real, parameterised URLs to the
@@ -50,7 +65,10 @@ an authenticated scan does not kill its own session.
 | `info` | DNS resolution / reverse DNS, optional WHOIS + `dig`/`nslookup`, TLS certificate details |
 | `network` | Host discovery on a CIDR, TCP port scan, banner grabbing, risky-service flagging, optional nmap |
 | `web` | Same-origin crawl, transport (HTTP→HTTPS), security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404-aware content discovery |
-| `api` | API documentation discovery, GraphQL introspection check, CORS, JWT analysis |
+| `wordpress` | WordPress detection, core/plugin/theme versions, XML-RPC, user enumeration, uploads listing |
+| `api` | API documentation discovery + OpenAPI parsing, GraphQL introspection check, CORS, JWT analysis |
+| `authz` | BOLA/IDOR comparison with a second account (GET only) |
+| `ssrf` | Opt-in SSRF probes with callback/internal targets on URL-like parameters |
 | `injection` | Reflected XSS, error-based SQLi and open redirect on parameters discovered in the URL/crawl (time-based SQLi only with `--aggressive`) |
 
 Every finding carries a **severity**, **confidence** and enough evidence to verify it
@@ -132,6 +150,19 @@ python bugbounty_tool.py -t https://app.example.com -m full
 python bugbounty_tool.py -t https://app.example.com -m full \
   -H 'Authorization: Bearer eyJ...' --cookie 'session=abc123'
 
+# BOLA/IDOR with two accounts (A = -H/--cookie, B = --header-b/--cookie-b)
+bbt -t https://app.example.com -m api \
+  -H 'Authorization: Bearer TOKEN_A' \
+  --header-b 'Authorization: Bearer TOKEN_B' \
+  --authz-id exp_6c2d91
+
+# SSRF with your own callback (Collaborator/webhook)
+bbt -t 'https://app.example.com/fetch?url=https://example.com' -m web \
+  --ssrf --ssrf-url https://your-collab.oastify.com
+
+# WordPress review (runs inside web/full when WordPress is detected)
+bbt -t https://blog.example.com -m web --max-pages 10
+
 # Local web app by hostname, then the public one, in one session
 python bugbounty_tool.py -t http://portal.local -t https://portal.example.com -m web --scope auto
 ```
@@ -155,6 +186,10 @@ python bugbounty_tool.py -t <target> -m api        # API review
 python bugbounty_tool.py -t <target> -m injection  # injection checks
 python bugbounty_tool.py -t <target> -m full       # everything (local first)
 ```
+
+WordPress, SSRF and authz checks run inside `-m web`, `-m api` and `-m full`
+(SSRF only when enabled with `--ssrf`/`--ssrf-url`; authz only with a second
+account).
 
 ### Command line options
 
@@ -180,6 +215,12 @@ python bugbounty_tool.py -t <target> -m full       # everything (local first)
 | `--max-injection-params` | Parameters tested per URL (default 6). |
 | `-H, --header` | Extra HTTP header `Name: Value` (repeatable). |
 | `--cookie` | Cookie(s) `name=value` (repeatable, `;`-separated). |
+| `--header-b` / `--cookie-b` | Second-account credentials for BOLA/IDOR comparison. |
+| `--authz-id` | Known object ID to test (repeatable, e.g. `exp_6c2d91`). |
+| `--max-authz-urls` | Max object URLs tested for BOLA/IDOR (default 15). |
+| `--ssrf` | Enable SSRF probes on URL-like parameters. |
+| `--ssrf-url` | Callback URL you control (Collaborator/webhook); implies `--ssrf`. |
+| `--max-ssrf-urls` | Max parameterised URLs tested for SSRF (default 10). |
 | `--jwt` | JWT/bearer token to analyse locally (repeatable). |
 | `--proxy` | Proxy URL for HTTP(S) requests. |
 | `--verify-tls` | Verify TLS certificates (default off for self-signed internal sites). |
@@ -220,8 +261,12 @@ behind each URL.
 3. **Review `crawl.json`** to see the discovered surface, then test promising
    endpoints manually with Burp/ffuf.
 4. **Add authentication** (`-H` / `--cookie`) and re-run so checks hit logged-in pages.
-5. **Verify every finding manually.** Automated hits are leads, not reports.
-6. **Report impact, not scanner output:** the "Attack Paths" section of
+5. **Create a second test account** (`--header-b` / `--cookie-b`) and check
+   `authz_results.json`; confirm any BOLA/IDOR lead by hand.
+6. **For SSRF**, use a callback you control (`--ssrf-url`) and only then enable
+   `--ssrf`; keep metadata probes for `--aggressive`.
+7. **Verify every finding manually.** Automated hits are leads, not reports.
+8. **Report impact, not scanner output:** the "Attack Paths" section of
    `SECURITY_REPORT.md` is written to help you explain impact and reproduction steps.
 
 ---
@@ -244,6 +289,11 @@ results/
         ├── tls_certificate.json
         ├── api_cors_analysis.json
         ├── api_docs_discovery.json
+        ├── api_spec.json              # raw OpenAPI/Swagger document
+        ├── api_endpoints.json         # parsed method/path/parameter list
+        ├── authz_results.json         # BOLA/IDOR A-vs-B comparison
+        ├── ssrf_results.json          # SSRF probe results
+        ├── wordpress.json             # WP version/plugin/theme summary
         ├── network_scan.json
         ├── network_scan.txt
         └── robots.txt
@@ -265,6 +315,8 @@ bbt/
 ├── http_client.py         # requests wrapper (rate limiting, auth headers)
 ├── checks.py              # reusable web/API checks
 ├── crawl.py               # bounded same-origin crawler
+├── openapi.py             # OpenAPI/Swagger discovery + parsing
+├── ids.py                 # object-ID extraction for BOLA/IDOR
 ├── attack.py              # attack-path correlation + risk score
 ├── crypto.py              # TLS certificate inspection (stdlib)
 ├── reporting.py           # Markdown + JSON reports
@@ -275,7 +327,10 @@ bbt/
     ├── info.py
     ├── network.py
     ├── web.py
+    ├── wordpress.py
     ├── api.py
+    ├── authz.py
+    ├── ssrf.py
     └── injection.py
 tests/                     # unit tests (no network required)
 legacy/                    # the original v1 script, kept for reference only
@@ -297,7 +352,8 @@ ruff check bbt tests
 
 The tests do not touch the network. They cover target parsing, scope
 classification, port specs, CIDR expansion, soft-404 handling, cookie flags,
-crawling, attack-path correlation, CLI options and finding aggregation.
+crawling, OpenAPI parsing, BOLA candidate generation, SSRF probes, WordPress
+detection, attack-path correlation, CLI options and finding aggregation.
 
 ---
 
@@ -310,6 +366,9 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 - Content discovery probes common sensitive files; injection probes send benign
   payloads. Some programs forbid automated scanners entirely — check the rules first.
 - Intrusive payloads (time-based SQLi) run only with `--aggressive`.
+- BOLA/IDOR checks only send GET requests and never modify objects.
+- SSRF probes are opt-in (`--ssrf`/`--ssrf-url`); cloud-metadata payloads are
+  gated behind `--aggressive`.
 - TLS verification is off by default because internal sites commonly use self-signed
   certificates; enable it with `--verify-tls`.
 
@@ -324,6 +383,12 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 - TLS protocol support is probed with separate TLS 1.0/1.1 handshakes; whether they
   succeed can depend on the local OpenSSL build’s policy.
 - `subfinder` output is saved as an artifact but not automatically scanned.
+- BOLA/IDOR checks need two accounts and are heuristic: verify ownership manually.
+  Public objects are filtered out, but some false positives remain.
+- Blind SSRF requires you to check the callback (`--ssrf-url`); cloud-metadata
+  probes only run with `--aggressive`.
+- WordPress plugin/theme versions are only detected when readme/style files are
+  readable; WPScan remains the better tool for full vulnerability mapping.
 - The crawler and web checks are sequential; `--threads` currently affects the
   network module only.
 - Attack-path rules are heuristics and require manual verification.
@@ -331,6 +396,19 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 ---
 
 ## 🗒️ Changelog
+
+### 2.2.0
+
+- Added BOLA/IDOR testing with a second account (`--header-b`, `--cookie-b`,
+  `--authz-id`, `--max-authz-urls`). Public objects are filtered with an
+  unauthenticated baseline request.
+- Added opt-in SSRF probes (`--ssrf`, `--ssrf-url`, `--max-ssrf-urls`).
+- Added a WordPress module: detection, core/plugin/theme version comparison,
+  XML-RPC, REST user enumeration, author enumeration and uploads listing.
+- Added OpenAPI/Swagger parsing (`api_spec.json`, `api_endpoints.json`) and used
+  documented paths to build authorization-test candidates.
+- Added attack-path rules for SSRF, BOLA and WordPress issues.
+- Added `tests/fakes.py` and expanded the suite to 89 tests.
 
 ### 2.1.1
 
@@ -358,7 +436,7 @@ crawling, attack-path correlation, CLI options and finding aggregation.
 - Fixed `--no-optional-tools` being ignored for `nslookup`.
 - Fixed `--ports` validation and error messages.
 - Silent no-op scans now emit an explicit finding.
-- Added `pyproject.toml` (`pip install -e .`, `bbt` command) and 60 unit tests.
+- Added `pyproject.toml` (`pip install -e .`, `bbt` command) and 53 unit tests.
 - Added active TLS 1.0/1.1 probing and shared TLS inspection between modules.
 - The crawler skips logout-style GET links to protect authenticated sessions.
 - Windows consoles get ANSI colour enabled when possible.

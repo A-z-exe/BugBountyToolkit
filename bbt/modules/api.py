@@ -5,8 +5,16 @@ import base64
 import json
 from typing import List, Optional, Tuple
 
-from ..checks import check_cors, establish_baseline, probe_paths, resolve_web_entry
+from ..checks import (
+    SENSITIVE_PATHS,
+    check_cors,
+    establish_baseline,
+    probe_paths,
+    resolve_web_entry,
+)
 from ..findings import Finding
+from ..openapi import endpoints as spec_endpoints
+from ..openapi import fetch_spec
 from ..target import Target
 from .base import BaseModule
 
@@ -57,6 +65,29 @@ class ApiModule(BaseModule):
         findings.extend(self._discover_docs(base_url))
         findings.extend(self._graphql_check(base_url))
 
+        spec = fetch_spec(self.ctx, base_url)
+        if spec:
+            documented = spec_endpoints(spec)
+            self.ctx.write_json("api_endpoints.json", documented, key="api_endpoints")
+            if documented:
+                findings.append(
+                    Finding(
+                        title=f"API specification parsed ({len(documented)} endpoints)",
+                        severity="info",
+                        category="api",
+                        target=base_url,
+                        description=(
+                            "The machine-readable specification was parsed and saved as "
+                            "api_endpoints.json. Use it to guide authorization/object tests."
+                        ),
+                        evidence="\n".join(
+                            f"{item['method']} {item['path']}"
+                            for item in documented[:20]
+                        ),
+                        confidence="high",
+                    )
+                )
+
         cors_findings, cors_data = check_cors(self.ctx, base_url)
         findings.extend(cors_findings)
         # Keep the API CORS evidence separate from the web module's file.
@@ -78,6 +109,8 @@ class ApiModule(BaseModule):
             key="api_docs",
         )
         for hit in hits:
+            if hit["path"] in SENSITIVE_PATHS:
+                continue
             if hit["path"].endswith((".json", ".yaml")) and hit["status"] == 200:
                 findings.append(
                     Finding(

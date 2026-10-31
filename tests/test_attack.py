@@ -45,6 +45,21 @@ class AttackPathTests(unittest.TestCase):
         self.assertEqual(transport["severity"], "high")
         self.assertEqual(len(transport["findings"]), 2)
 
+    def test_ssrf_bola_and_wordpress_chains(self):
+        chains = build_attack_paths(
+            [
+                _finding("Potential SSRF via parameter 'url' (localhost)", "high"),
+                _finding(
+                    "Potential BOLA/IDOR: object accessible to both accounts", "high"
+                ),
+                _finding("Outdated WordPress plugin: foo (1.0 < 2.0)", "medium"),
+            ]
+        )
+        ids = {chain["id"] for chain in chains}
+        self.assertIn("ssrf", ids)
+        self.assertIn("bola", ids)
+        self.assertIn("wordpress", ids)
+
     def test_xss_chain_requires_missing_headers(self):
         xss = _finding("Possible reflected XSS in parameter 'q'", "medium")
         headers = _finding("Missing security headers (6)", "medium")

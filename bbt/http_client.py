@@ -7,7 +7,7 @@ returns ``None`` instead of raising, so modules can stay readable.
 from __future__ import annotations
 
 import logging
-from typing import Optional
+from typing import Dict, Optional
 
 import requests
 
@@ -30,10 +30,14 @@ class HttpClient:
         config: Config,
         rate_limiter: Optional[RateLimiter] = None,
         logger: Optional[logging.Logger] = None,
+        headers: Optional[Dict[str, str]] = None,
+        cookies: Optional[Dict[str, str]] = None,
     ) -> None:
         self.config = config
         self.log = logger or log
         self.limiter = rate_limiter or RateLimiter(config.rate)
+        effective_headers = config.headers if headers is None else headers
+        effective_cookies = config.cookies if cookies is None else cookies
         self.session = requests.Session()
         self.session.headers.update(
             {
@@ -44,10 +48,10 @@ class HttpClient:
         )
         if config.proxy:
             self.session.proxies.update({"http": config.proxy, "https": config.proxy})
-        if config.headers:
-            self.session.headers.update(config.headers)
-        if config.cookies:
-            self.session.cookies.update(config.cookies)
+        if effective_headers:
+            self.session.headers.update(effective_headers)
+        if effective_cookies:
+            self.session.cookies.update(effective_cookies)
         adapter = requests.adapters.HTTPAdapter(pool_connections=32, pool_maxsize=32)
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)

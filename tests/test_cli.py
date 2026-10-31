@@ -53,6 +53,36 @@ class CliOptionTests(unittest.TestCase):
         self.assertEqual(config.headers["Authorization"], "Bearer abc")
         self.assertEqual(config.cookies["session"], "xyz")
 
+    def test_second_account_and_ssrf_options_reach_config(self):
+        args = parse_arguments(
+            [
+                "-t",
+                "https://example.com",
+                "-m",
+                "web",
+                "--header-b",
+                "Authorization: Bearer B",
+                "--cookie-b",
+                "session=b",
+                "--authz-id",
+                "exp_6c2d91",
+                "--ssrf-url",
+                "https://callback.example",
+            ]
+        )
+        config = build_config(
+            args,
+            headers=parse_headers(args.header),
+            cookies=parse_cookies(args.cookie),
+            headers_b=parse_headers(args.header_b),
+            cookies_b=parse_cookies(args.cookie_b),
+        )
+        self.assertEqual(config.headers_b["Authorization"], "Bearer B")
+        self.assertEqual(config.cookies_b["session"], "b")
+        self.assertEqual(config.authz_ids, ["exp_6c2d91"])
+        self.assertTrue(config.ssrf_enabled)
+        self.assertEqual(config.ssrf_callback, "https://callback.example")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -32,6 +32,9 @@ _MIN_EVIDENCE = {
     "weak-transport": "medium",
     "information-leak": "low",
     "api-exposure": "low",
+    "ssrf": "medium",
+    "bola": "medium",
+    "wordpress": "medium",
 }
 
 
@@ -61,6 +64,8 @@ _RULES: Sequence[_Rule] = (
             "exposed .htpasswd",
             "exposed web.config",
             "actuator env",
+            "wordpress config backup",
+            "wordpress debug log",
         ),
         impact=(
             "Configuration files, database dumps or source code are often enough to "
@@ -263,6 +268,69 @@ _RULES: Sequence[_Rule] = (
             "Download the specification and list endpoints not covered by the UI.",
             "Test object-level authorization (IDOR/BOLA) on a few representative endpoints.",
             "Report undocumented/admin endpoints with proof of missing authorization.",
+        ),
+    ),
+    _Rule(
+        id="ssrf",
+        title="Possible SSRF can reach internal services",
+        severity="high",
+        any_terms=(
+            "potential ssrf",
+            "possible ssrf",
+            "server-side request forgery",
+        ),
+        impact=(
+            "A confirmed SSRF can reach cloud metadata, internal admin panels and "
+            "localhost-only services, often chaining into credential theft or RCE."
+        ),
+        next_steps=(
+            "Re-run with a callback URL you control (--ssrf-url) and confirm the hit.",
+            "Try only benign internal targets (127.0.0.1, metadata) inside the program scope.",
+            "Capture the request/response and the callback log for the report.",
+        ),
+    ),
+    _Rule(
+        id="bola",
+        title="Broken object-level authorization may expose other users' data",
+        severity="high",
+        any_terms=(
+            "bola",
+            "idor",
+            "object accessible to both accounts",
+            "object-level authorization",
+            "administrative area",
+        ),
+        impact=(
+            "Successful authentication is not authorization: if object IDs are not bound "
+            "to the current user, one account can read or modify another user's data."
+        ),
+        next_steps=(
+            "Confirm with two accounts you control: A owns the object, B must not see it.",
+            "Test the same ID with B and compare the response to A's response.",
+            "Check read *and* write operations; report the exact object and impact.",
+        ),
+    ),
+    _Rule(
+        id="wordpress",
+        title="WordPress attack surface needs patch-level review",
+        severity="medium",
+        any_terms=(
+            "outdated wordpress",
+            "wordpress plugin",
+            "wordpress theme",
+            "xmlrpc",
+            "users enumerable",
+            "author enumeration",
+            "directory listing enabled: /wp-content/uploads/",
+        ),
+        impact=(
+            "Outdated plugins/themes, XML-RPC and username leaks are the most common "
+            "route to WordPress account takeover and remote code execution."
+        ),
+        next_steps=(
+            "Compare every detected plugin/theme version with WPScan/Patchstack advisories.",
+            "Disable XML-RPC and user enumeration if they are not required.",
+            "Never upload a web shell to prove RCE; use a benign proof file if the program allows it.",
         ),
     ),
 )

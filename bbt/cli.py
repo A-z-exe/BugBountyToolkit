@@ -103,6 +103,8 @@ def build_config(
     args: argparse.Namespace,
     headers: Optional[Dict[str, str]] = None,
     cookies: Optional[Dict[str, str]] = None,
+    headers_b: Optional[Dict[str, str]] = None,
+    cookies_b: Optional[Dict[str, str]] = None,
 ) -> Config:
     max_pages = 0 if getattr(args, "no_crawl", False) else args.max_pages
     return Config(
@@ -115,6 +117,10 @@ def build_config(
         proxy=args.proxy,
         headers=dict(headers or {}),
         cookies=dict(cookies or {}),
+        headers_b=dict(headers_b or {}),
+        cookies_b=dict(cookies_b or {}),
+        authz_ids=list(getattr(args, "authz_id", []) or []),
+        max_authz_urls=getattr(args, "max_authz_urls", 15),
         scope=args.scope,
         max_hosts=args.max_hosts,
         scan_network=args.scan_network,
@@ -126,6 +132,9 @@ def build_config(
         crawl_depth=args.crawl_depth,
         max_injection_urls=args.max_injection_urls,
         max_injection_params=args.max_injection_params,
+        ssrf_enabled=bool(getattr(args, "ssrf", False) or getattr(args, "ssrf_url", None)),
+        ssrf_callback=getattr(args, "ssrf_url", None),
+        max_ssrf_urls=getattr(args, "max_ssrf_urls", 10),
         aggressive=args.aggressive,
         output_root=Path(args.output),
         no_color=args.no_color,
@@ -179,6 +188,20 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="Extra HTTP header 'Name: Value'. Repeatable.")
     parser.add_argument("--cookie", action="append", default=[],
                         help="Cookie(s) 'name=value' (separate multiple with ';'). Repeatable.")
+    parser.add_argument("--header-b", action="append", default=[],
+                        help="Second-account header 'Name: Value' for BOLA/IDOR checks.")
+    parser.add_argument("--cookie-b", action="append", default=[],
+                        help="Second-account cookie(s) 'name=value' for BOLA/IDOR checks.")
+    parser.add_argument("--authz-id", action="append", default=[],
+                        help="Known object ID to test for BOLA/IDOR (repeatable).")
+    parser.add_argument("--max-authz-urls", type=int, default=15,
+                        help="Max object URLs tested for BOLA/IDOR (default 15).")
+    parser.add_argument("--ssrf", action="store_true",
+                        help="Enable SSRF probes on URL-like parameters.")
+    parser.add_argument("--ssrf-url",
+                        help="Callback URL you control (Collaborator/webhook) for out-of-band SSRF.")
+    parser.add_argument("--max-ssrf-urls", type=int, default=10,
+                        help="Max parameterised URLs tested for SSRF (default 10).")
     parser.add_argument("--jwt", action="append", help="JWT/bearer token to analyse. Repeatable.")
     parser.add_argument("--proxy", help="Proxy URL for HTTP(S) requests.")
     parser.add_argument("--verify-tls", action="store_true", help="Verify TLS certificates (default: off).")
@@ -218,8 +241,8 @@ def interactive(config: Config, ui: UI, logger) -> int:
         "  BBT - Security Assessment Menu\n" + "=" * 60 + "\n"
         "  1. Information gathering (DNS/WHOIS/TLS)\n"
         "  2. Network scan (ports/services)\n"
-        "  3. Web assessment (crawl + checks)\n"
-        "  4. API review\n"
+        "  3. Web assessment (crawl, WordPress, SSRF, authz)\n"
+        "  4. API review (+ BOLA/IDOR if a second account is set)\n"
         "  5. Injection checks\n"
         "  6. Full scan (local assets first, then remote)\n"
         "  7. Check optional tools\n"
@@ -280,6 +303,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         headers = parse_headers(args.header)
         cookies = parse_cookies(args.cookie)
+        headers_b = parse_headers(args.header_b)
+        cookies_b = parse_cookies(args.cookie_b)
+        if args.ssrf_url and not args.ssrf_url.startswith(("http://", "https://")):
+            raise ValueError("--ssrf-url must start with http:// or https://")
         if args.ports:
             parse_ports(args.ports)
     except ValueError as exc:
@@ -289,7 +316,13 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     if not (args.skip_legal or os.environ.get("BBT_SKIP_LEGAL")):
         validate_legal(ui)
 
-    config = build_config(args, headers=headers, cookies=cookies)
+    config = build_config(
+        args,
+        headers=headers,
+        cookies=cookies,
+        headers_b=headers_b,
+        cookies_b=cookies_b,
+    )
     config.output_root.mkdir(parents=True, exist_ok=True)
     logger = setup_logging(verbose=args.verbose, logfile=config.output_root / "bbt.log")
     logger.info("BBT %s on %s", __version__, platform_name())

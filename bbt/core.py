@@ -12,11 +12,14 @@ from .context import ScanContext
 from .findings import Finding, FindingsStore
 from .http_client import HttpClient
 from .modules.api import ApiModule
+from .modules.authz import AuthzModule
 from .modules.base import BaseModule
 from .modules.info import InfoModule
 from .modules.injection import InjectionModule
 from .modules.network import NetworkModule
+from .modules.ssrf import SsrfModule
 from .modules.web import WebModule
+from .modules.wordpress import WordpressModule
 from .reporting import write_reports, write_session_summary
 from .target import Target
 from .ui import UI
@@ -26,19 +29,40 @@ MODULE_CLASSES: Dict[str, Type[BaseModule]] = {
     "info": InfoModule,
     "network": NetworkModule,
     "web": WebModule,
+    "wordpress": WordpressModule,
     "api": ApiModule,
+    "authz": AuthzModule,
+    "ssrf": SsrfModule,
     "injection": InjectionModule,
 }
 
-FULL_ORDER = ["info", "network", "web", "api", "injection"]
+#: Which modules run for each mode. New modules can be added without a new CLI
+#: mode (e.g. WordPress, authz and SSRF run inside web/api/full).
+MODE_MODULES: Dict[str, List[str]] = {
+    "info": ["info"],
+    "network": ["network"],
+    "web": ["web", "wordpress", "ssrf", "authz"],
+    "api": ["api", "authz", "ssrf"],
+    "injection": ["injection"],
+    "full": [
+        "info",
+        "network",
+        "web",
+        "wordpress",
+        "api",
+        "authz",
+        "ssrf",
+        "injection",
+    ],
+}
+
+FULL_ORDER = MODE_MODULES["full"]
 
 
 def modules_for_mode(mode: str) -> List[Type[BaseModule]]:
-    if mode == "full":
-        return [MODULE_CLASSES[name] for name in FULL_ORDER]
-    if mode in MODULE_CLASSES:
-        return [MODULE_CLASSES[mode]]
-    raise ValueError(f"unknown mode: {mode}")
+    if mode not in MODE_MODULES:
+        raise ValueError(f"unknown mode: {mode}")
+    return [MODULE_CLASSES[name] for name in MODE_MODULES[mode]]
 
 
 class Scanner:

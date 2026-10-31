@@ -56,6 +56,11 @@ class Config:
     headers: Dict[str, str] = field(default_factory=dict)
     #: Cookies parsed from ``--cookie name=value``.
     cookies: Dict[str, str] = field(default_factory=dict)
+    #: Second account, used for BOLA/IDOR comparison.
+    headers_b: Dict[str, str] = field(default_factory=dict)
+    cookies_b: Dict[str, str] = field(default_factory=dict)
+    authz_ids: List[str] = field(default_factory=list)
+    max_authz_urls: int = 15
 
     # Scope / target discovery
     scope: str = "auto"  # auto | local | remote
@@ -77,6 +82,11 @@ class Config:
     crawl_depth: int = 2
     max_injection_urls: int = 10
     max_injection_params: int = 6
+
+    # SSRF probing (opt-in: --ssrf or --ssrf-url)
+    ssrf_enabled: bool = False
+    ssrf_callback: Optional[str] = None
+    max_ssrf_urls: int = 10
 
     # Safety
     aggressive: bool = False  # enables intrusive payloads (SQLi time-based, etc.)
@@ -101,5 +111,7 @@ class Config:
         self.crawl_depth = max(1, int(self.crawl_depth))
         self.max_injection_urls = max(0, int(self.max_injection_urls))
         self.max_injection_params = max(0, int(self.max_injection_params))
+        self.max_authz_urls = max(0, int(self.max_authz_urls))
+        self.max_ssrf_urls = max(0, int(self.max_ssrf_urls))
         if self.rate is not None and self.rate < 0:
             self.rate = 0.0

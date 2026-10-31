@@ -3,9 +3,33 @@ import logging
 import unittest
 
 from bbt.config import Config
-from bbt.core import Scanner
+from bbt.core import Scanner, modules_for_mode
 from bbt.target import parse_target
 from bbt.ui import UI
+
+
+class ModeRegistryTests(unittest.TestCase):
+    def test_web_mode_includes_wordpress_ssrf_and_authz(self):
+        names = [module.name for module in modules_for_mode("web")]
+        self.assertIn("wordpress", names)
+        self.assertIn("ssrf", names)
+        self.assertIn("authz", names)
+
+    def test_full_mode_contains_all_modules(self):
+        names = [module.name for module in modules_for_mode("full")]
+        self.assertEqual(
+            names,
+            [
+                "info",
+                "network",
+                "web",
+                "wordpress",
+                "api",
+                "authz",
+                "ssrf",
+                "injection",
+            ],
+        )
 
 
 class ClassifyTests(unittest.TestCase):
