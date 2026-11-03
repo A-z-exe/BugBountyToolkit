@@ -83,6 +83,30 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(config.ssrf_enabled)
         self.assertEqual(config.ssrf_callback, "https://callback.example")
 
+    def test_recon_and_report_options_reach_config(self):
+        args = parse_arguments(
+            [
+                "-t",
+                "https://example.com",
+                "-m",
+                "full",
+                "--subdomain-enum",
+                "--max-subdomains",
+                "50",
+                "--no-js-extract",
+                "--no-bounty-reports",
+                "--write-pocs",
+                "--i-have-authorization",
+            ]
+        )
+        config = build_config(args, headers={}, cookies={})
+        self.assertTrue(config.subdomain_enum)
+        self.assertEqual(config.max_subdomains, 50)
+        self.assertFalse(config.extract_js)
+        self.assertFalse(config.bounty_reports)
+        self.assertTrue(config.write_pocs)
+        self.assertTrue(config.authorized_pocs)
+
 
 if __name__ == "__main__":
     unittest.main()

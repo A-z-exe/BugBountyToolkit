@@ -35,6 +35,7 @@ _MIN_EVIDENCE = {
     "ssrf": "medium",
     "bola": "medium",
     "wordpress": "medium",
+    "takeover": "high",
 }
 
 
@@ -331,6 +332,21 @@ _RULES: Sequence[_Rule] = (
             "Compare every detected plugin/theme version with WPScan/Patchstack advisories.",
             "Disable XML-RPC and user enumeration if they are not required.",
             "Never upload a web shell to prove RCE; use a benign proof file if the program allows it.",
+        ),
+    ),
+    _Rule(
+        id="subdomain-takeover",
+        title="Dangling subdomain may be claimable by an attacker",
+        severity="high",
+        any_terms=("subdomain takeover",),
+        impact=(
+            "A claimed subdomain can host phishing pages or steal cookies scoped to "
+            "the parent domain; it is often a critical finding on cloud providers."
+        ),
+        next_steps=(
+            "Confirm the CNAME and the provider's unclaimed-page fingerprint.",
+            "Do not claim the subdomain; report the dangling record to the owner.",
+            "Capture DNS output and the HTTP response as evidence.",
         ),
     ),
 )

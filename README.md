@@ -11,7 +11,21 @@ fully in pure Python (only `requests` is required) and uses external tools such 
 
 ---
 
-## ✨ What's new in 2.2
+## ✨ What's new in 2.3
+
+- **Bug-bounty report drafts** — every finding gets a Markdown draft with
+  reproduction, evidence, impact, remediation and a submission checklist.
+- **Safe verification PoCs** — optional shell scripts that replay the minimum
+  request (no data dumping, no RCE, no state changes), gated behind
+  `--write-pocs --i-have-authorization`.
+- **Subdomain-takeover recon** — passive subdomains from crt.sh + DNS, with
+  fingerprints for common claimable services (`--subdomain-enum`).
+- **JavaScript endpoint extraction** — same-origin bundles are parsed for
+  `/api/...` paths and saved as `js_endpoints.json`.
+- **Scope warnings** in drafts for classes commonly rejected by programs
+  (headers/TLS/version/WordPress).
+
+### From 2.2
 
 - **BOLA/IDOR checks with two accounts** — replay object endpoints from the
   crawl/OpenAPI spec with a second account (`--header-b` / `--cookie-b`) and
@@ -64,7 +78,8 @@ an authenticated scan does not kill its own session.
 | --- | --- |
 | `info` | DNS resolution / reverse DNS, optional WHOIS + `dig`/`nslookup`, TLS certificate details |
 | `network` | Host discovery on a CIDR, TCP port scan, banner grabbing, risky-service flagging, optional nmap |
-| `web` | Same-origin crawl, transport (HTTP→HTTPS), security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404-aware content discovery |
+| `web` | Same-origin crawl, JS endpoint extraction, transport (HTTP→HTTPS), security headers, cookie flags, TLS, CORS, HTTP methods, HTML review, soft-404-aware content discovery |
+| `subdomain` | Passive subdomain enumeration (crt.sh + DNS) and takeover fingerprints |
 | `wordpress` | WordPress detection, core/plugin/theme versions, XML-RPC, user enumeration, uploads listing |
 | `api` | API documentation discovery + OpenAPI parsing, GraphQL introspection check, CORS, JWT analysis |
 | `authz` | BOLA/IDOR comparison with a second account (GET only) |
@@ -97,6 +112,10 @@ Optional external tools (detected automatically, never required):
 
 `nikto` and `sqlmap` are **not** invoked automatically (they were previously listed
 but never wired into the code). Use them manually for deeper testing.
+
+For exact CNAME/NS answers during `--subdomain-enum`, install the optional
+`dnspython` package (`pip install dnspython`); without it BBT falls back to the
+system resolver aliases.
 
 ---
 
@@ -221,6 +240,12 @@ account).
 | `--ssrf` | Enable SSRF probes on URL-like parameters. |
 | `--ssrf-url` | Callback URL you control (Collaborator/webhook); implies `--ssrf`. |
 | `--max-ssrf-urls` | Max parameterised URLs tested for SSRF (default 10). |
+| `--subdomain-enum` | Passive subdomain enumeration + takeover fingerprints (crt.sh). |
+| `--max-subdomains` | Max subdomains resolved (default 200). |
+| `--no-js-extract` | Do not parse same-origin JS bundles for API paths. |
+| `--no-bounty-reports` | Do not generate per-finding report drafts. |
+| `--write-pocs` | Generate safe verification PoC scripts (requires authorization flag). |
+| `--i-have-authorization` | Confirm written permission; required for `--write-pocs`. |
 | `--jwt` | JWT/bearer token to analyse locally (repeatable). |
 | `--proxy` | Proxy URL for HTTP(S) requests. |
 | `--verify-tls` | Verify TLS certificates (default off for self-signed internal sites). |
@@ -291,9 +316,15 @@ results/
         ├── api_docs_discovery.json
         ├── api_spec.json              # raw OpenAPI/Swagger document
         ├── api_endpoints.json         # parsed method/path/parameter list
+        ├── js_endpoints.json          # API paths extracted from JS bundles
+        ├── subdomains.json            # passive subdomain/CNAME inventory
         ├── authz_results.json         # BOLA/IDOR A-vs-B comparison
         ├── ssrf_results.json          # SSRF probe results
         ├── wordpress.json             # WP version/plugin/theme summary
+        ├── bounty_reports/            # per-finding report drafts + safe PoCs
+        │   ├── index.md
+        │   ├── 01-....md
+        │   └── poc-01-....sh
         ├── network_scan.json
         ├── network_scan.txt
         └── robots.txt
@@ -317,7 +348,9 @@ bbt/
 ├── crawl.py               # bounded same-origin crawler
 ├── openapi.py             # OpenAPI/Swagger discovery + parsing
 ├── ids.py                 # object-ID extraction for BOLA/IDOR
+├── recon.py               # JS endpoint extraction + subdomain takeover recon
 ├── attack.py              # attack-path correlation + risk score
+├── bounty.py              # bounty report drafts + safe verification PoCs
 ├── crypto.py              # TLS certificate inspection (stdlib)
 ├── reporting.py           # Markdown + JSON reports
 ├── ui.py                  # console output + logging
@@ -331,6 +364,7 @@ bbt/
     ├── api.py
     ├── authz.py
     ├── ssrf.py
+    ├── subdomain.py
     └── injection.py
 tests/                     # unit tests (no network required)
 legacy/                    # the original v1 script, kept for reference only
@@ -353,7 +387,8 @@ ruff check bbt tests
 The tests do not touch the network. They cover target parsing, scope
 classification, port specs, CIDR expansion, soft-404 handling, cookie flags,
 crawling, OpenAPI parsing, BOLA candidate generation, SSRF probes, WordPress
-detection, attack-path correlation, CLI options and finding aggregation.
+detection, subdomain-takeover fingerprints, JS endpoint extraction, bounty
+report/PoC generation, attack-path correlation, CLI options and findings.
 
 ---
 
@@ -369,6 +404,10 @@ detection, attack-path correlation, CLI options and finding aggregation.
 - BOLA/IDOR checks only send GET requests and never modify objects.
 - SSRF probes are opt-in (`--ssrf`/`--ssrf-url`); cloud-metadata payloads are
   gated behind `--aggressive`.
+- Generated PoCs are **verification only**: they replay a benign request and never
+  dump data, change state or execute a shell. They require `--i-have-authorization`.
+- Subdomain takeover recon never claims a dangling name; it only fingerprints it.
+- Reports are drafts for human review; BBT never submits them automatically.
 - TLS verification is off by default because internal sites commonly use self-signed
   certificates; enable it with `--verify-tls`.
 
@@ -392,10 +431,25 @@ detection, attack-path correlation, CLI options and finding aggregation.
 - The crawler and web checks are sequential; `--threads` currently affects the
   network module only.
 - Attack-path rules are heuristics and require manual verification.
+- PoC generation is intentionally verification-only; BBT does not automate
+  exploitation, data extraction or account takeover.
+- Subdomain takeover checks cover common CNAME fingerprints, not every provider.
+- Bounty drafts are generic; filter out categories the program rejects.
 
 ---
 
 ## 🗒️ Changelog
+
+### 2.3.0
+
+- Added per-finding bounty report drafts (`bounty_reports/`) with reproduction,
+  evidence, impact, remediation and a submission checklist.
+- Added safe verification PoC scripts (`--write-pocs --i-have-authorization`).
+- Added passive subdomain enumeration and takeover fingerprints
+  (`--subdomain-enum`, crt.sh + DNS).
+- Added same-origin JavaScript endpoint extraction (`js_endpoints.json`).
+- Added scope warnings for classes commonly rejected by programs.
+- Expanded the offline suite to 101 tests.
 
 ### 2.2.0
 

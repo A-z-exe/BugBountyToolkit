@@ -18,6 +18,7 @@ from .modules.info import InfoModule
 from .modules.injection import InjectionModule
 from .modules.network import NetworkModule
 from .modules.ssrf import SsrfModule
+from .modules.subdomain import SubdomainModule
 from .modules.web import WebModule
 from .modules.wordpress import WordpressModule
 from .reporting import write_reports, write_session_summary
@@ -33,19 +34,21 @@ MODULE_CLASSES: Dict[str, Type[BaseModule]] = {
     "api": ApiModule,
     "authz": AuthzModule,
     "ssrf": SsrfModule,
+    "subdomain": SubdomainModule,
     "injection": InjectionModule,
 }
 
 #: Which modules run for each mode. New modules can be added without a new CLI
 #: mode (e.g. WordPress, authz and SSRF run inside web/api/full).
 MODE_MODULES: Dict[str, List[str]] = {
-    "info": ["info"],
+    "info": ["info", "subdomain"],
     "network": ["network"],
     "web": ["web", "wordpress", "ssrf", "authz"],
     "api": ["api", "authz", "ssrf"],
     "injection": ["injection"],
     "full": [
         "info",
+        "subdomain",
         "network",
         "web",
         "wordpress",

@@ -19,6 +19,7 @@ from ..checks import (
 )
 from ..crawl import crawl_site
 from ..findings import Finding
+from ..recon import extract_js_endpoints
 from ..target import Target
 from .base import BaseModule
 
@@ -71,6 +72,12 @@ class WebModule(BaseModule):
         findings.extend(check_security_headers(self.ctx, base_url, resp))
         findings.extend(check_cookies(self.ctx, base_url, resp, scheme=scheme))
         findings.extend(check_transport(self.ctx, base_url, scheme))
+
+        if self.config.extract_js:
+            js_endpoints = extract_js_endpoints(self.ctx, base_url, html=resp.text)
+            if js_endpoints:
+                self.ctx.write_json("js_endpoints.json", js_endpoints, key="js_endpoints")
+                self.ui.info(f"Extracted {len(js_endpoints)} API path(s) from JavaScript")
 
         # CORS
         cors_findings, cors_data = check_cors(self.ctx, base_url)

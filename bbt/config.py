@@ -88,6 +88,14 @@ class Config:
     ssrf_callback: Optional[str] = None
     max_ssrf_urls: int = 10
 
+    # Recon / reporting
+    subdomain_enum: bool = False
+    max_subdomains: int = 200
+    extract_js: bool = True
+    bounty_reports: bool = True
+    write_pocs: bool = False
+    authorized_pocs: bool = False
+
     # Safety
     aggressive: bool = False  # enables intrusive payloads (SQLi time-based, etc.)
 
@@ -113,5 +121,6 @@ class Config:
         self.max_injection_params = max(0, int(self.max_injection_params))
         self.max_authz_urls = max(0, int(self.max_authz_urls))
         self.max_ssrf_urls = max(0, int(self.max_ssrf_urls))
+        self.max_subdomains = max(1, int(self.max_subdomains))
         if self.rate is not None and self.rate < 0:
             self.rate = 0.0

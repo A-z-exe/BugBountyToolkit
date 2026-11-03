@@ -135,6 +135,12 @@ def build_config(
         ssrf_enabled=bool(getattr(args, "ssrf", False) or getattr(args, "ssrf_url", None)),
         ssrf_callback=getattr(args, "ssrf_url", None),
         max_ssrf_urls=getattr(args, "max_ssrf_urls", 10),
+        subdomain_enum=bool(getattr(args, "subdomain_enum", False)),
+        max_subdomains=getattr(args, "max_subdomains", 200),
+        extract_js=not getattr(args, "no_js_extract", False),
+        bounty_reports=not getattr(args, "no_bounty_reports", False),
+        write_pocs=bool(getattr(args, "write_pocs", False)),
+        authorized_pocs=bool(getattr(args, "i_have_authorization", False)),
         aggressive=args.aggressive,
         output_root=Path(args.output),
         no_color=args.no_color,
@@ -202,6 +208,18 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="Callback URL you control (Collaborator/webhook) for out-of-band SSRF.")
     parser.add_argument("--max-ssrf-urls", type=int, default=10,
                         help="Max parameterised URLs tested for SSRF (default 10).")
+    parser.add_argument("--subdomain-enum", action="store_true",
+                        help="Passive subdomain enumeration + takeover fingerprints (crt.sh).")
+    parser.add_argument("--max-subdomains", type=int, default=200,
+                        help="Max subdomains resolved during enumeration (default 200).")
+    parser.add_argument("--no-js-extract", action="store_true",
+                        help="Do not fetch JavaScript bundles to extract API endpoints.")
+    parser.add_argument("--no-bounty-reports", action="store_true",
+                        help="Do not generate per-finding bug-bounty report drafts.")
+    parser.add_argument("--write-pocs", action="store_true",
+                        help="Generate safe verification PoC scripts (requires --i-have-authorization).")
+    parser.add_argument("--i-have-authorization", action="store_true",
+                        help="Confirm written permission for the target (needed for --write-pocs).")
     parser.add_argument("--jwt", action="append", help="JWT/bearer token to analyse. Repeatable.")
     parser.add_argument("--proxy", help="Proxy URL for HTTP(S) requests.")
     parser.add_argument("--verify-tls", action="store_true", help="Verify TLS certificates (default: off).")
@@ -323,6 +341,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         headers_b=headers_b,
         cookies_b=cookies_b,
     )
+    if config.write_pocs and not config.authorized_pocs:
+        ui.warn("--write-pocs ignored: add --i-have-authorization for the target you own.")
+        config.write_pocs = False
     config.output_root.mkdir(parents=True, exist_ok=True)
     logger = setup_logging(verbose=args.verbose, logfile=config.output_root / "bbt.log")
     logger.info("BBT %s on %s", __version__, platform_name())

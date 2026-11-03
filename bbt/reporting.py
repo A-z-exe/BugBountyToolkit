@@ -8,6 +8,7 @@ from typing import Dict, List, Tuple
 
 from . import __version__
 from .attack import build_attack_paths, risk_score
+from .bounty import write_bounty_reports
 from .context import ScanContext
 from .findings import SEVERITIES
 
@@ -149,6 +150,8 @@ def write_reports(ctx: ScanContext, mode: str, duration: float) -> Tuple[Path, P
     md_path.write_text(render_markdown(ctx, mode, duration), encoding="utf-8")
 
     chains = build_attack_paths(ctx.findings)
+    score = risk_score(ctx.findings, chains)
+    write_bounty_reports(ctx, mode, duration, score, chains)
     summary: Dict[str, object] = {
         "tool": "BBT",
         "version": __version__,
@@ -158,7 +161,7 @@ def write_reports(ctx: ScanContext, mode: str, duration: float) -> Tuple[Path, P
         "target": ctx.target.to_dict(),
         "summary": ctx.findings.counts(),
         "total_findings": len(ctx.findings),
-        "risk_score": risk_score(ctx.findings, chains),
+        "risk_score": score,
         "attack_paths": chains,
         "findings": ctx.findings.to_list(),
         "artifacts": {

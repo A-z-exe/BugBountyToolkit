@@ -4,6 +4,9 @@ requests>=2.25.0
 # Development / test tools (optional):
 #   pip install -e ".[dev]"      # installs pytest + ruff
 #
+# Optional recon helper for exact CNAME resolution:
+#   pip install dnspython
+#
 # Optional external tools (install separately, detected automatically):
 #   nmap       - richer network service/version detection
 #   subfinder  - passive subdomain discovery

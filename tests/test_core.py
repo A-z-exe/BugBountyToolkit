@@ -15,12 +15,17 @@ class ModeRegistryTests(unittest.TestCase):
         self.assertIn("ssrf", names)
         self.assertIn("authz", names)
 
+    def test_info_mode_includes_subdomain_recon(self):
+        names = [module.name for module in modules_for_mode("info")]
+        self.assertIn("subdomain", names)
+
     def test_full_mode_contains_all_modules(self):
         names = [module.name for module in modules_for_mode("full")]
         self.assertEqual(
             names,
             [
                 "info",
+                "subdomain",
                 "network",
                 "web",
                 "wordpress",
