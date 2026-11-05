@@ -1,7 +1,13 @@
 """Tests for utility helpers (no network access required)."""
 import unittest
 
-from bbt.utils import expand_cidr, is_private_ip, parse_ports, safe_filename
+from bbt.utils import (
+    expand_cidr,
+    is_private_ip,
+    parse_ports,
+    safe_filename,
+    same_site_host,
+)
 
 
 class UtilsTests(unittest.TestCase):
@@ -40,6 +46,20 @@ class UtilsTests(unittest.TestCase):
     def test_safe_filename(self):
         self.assertEqual(safe_filename("https://example.com/a b"), "https_example.com_a_b")
         self.assertEqual(safe_filename(""), "target")
+
+    def test_safe_filename_avoids_windows_reserved_names(self):
+        for name in ("CON", "con.txt", "NUL", "COM1", "lpt9"):
+            self.assertTrue(safe_filename(name).startswith("_"))
+        self.assertEqual(safe_filename("console"), "console")
+
+    def test_same_site_host(self):
+        self.assertTrue(same_site_host("example.com", "example.com"))
+        self.assertTrue(same_site_host("Example.COM", "example.com."))
+        self.assertTrue(same_site_host("example.com", "www.example.com"))
+        self.assertTrue(same_site_host("www.example.com", "example.com"))
+        self.assertFalse(same_site_host("example.com", "evil.example.com"))
+        self.assertFalse(same_site_host("example.com", "example.com.evil"))
+        self.assertFalse(same_site_host("example.com", None))
 
 
 if __name__ == "__main__":

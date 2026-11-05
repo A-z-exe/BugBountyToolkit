@@ -113,7 +113,7 @@ def build_config(
         command_timeout=args.command_timeout,
         threads=args.threads,
         rate=args.rate,
-        verify_tls=args.verify_tls,
+        verify_tls=not getattr(args, "insecure", False),
         proxy=args.proxy,
         headers=dict(headers or {}),
         cookies=dict(cookies or {}),
@@ -222,7 +222,10 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
                         help="Confirm written permission for the target (needed for --write-pocs).")
     parser.add_argument("--jwt", action="append", help="JWT/bearer token to analyse. Repeatable.")
     parser.add_argument("--proxy", help="Proxy URL for HTTP(S) requests.")
-    parser.add_argument("--verify-tls", action="store_true", help="Verify TLS certificates (default: off).")
+    parser.add_argument("--insecure", action="store_true",
+                        help="Do not verify TLS certificates (self-signed internal sites).")
+    parser.add_argument("--verify-tls", action="store_true",
+                        help="Verify TLS certificates (default; kept for compatibility).")
     parser.add_argument("--no-optional-tools", action="store_true",
                         help="Never call external tools even if installed.")
     parser.add_argument("--aggressive", action="store_true",
@@ -341,6 +344,14 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         headers_b=headers_b,
         cookies_b=cookies_b,
     )
+    if not config.verify_tls:
+        if config.headers or config.cookies or config.headers_b or config.cookies_b:
+            ui.warn(
+                "TLS verification is disabled (--insecure) while credentials are "
+                "configured; they can be intercepted by a man-in-the-middle."
+            )
+        else:
+            ui.warn("TLS verification is disabled (--insecure); certificates are not validated.")
     if config.write_pocs and not config.authorized_pocs:
         ui.warn("--write-pocs ignored: add --i-have-authorization for the target you own.")
         config.write_pocs = False

@@ -174,21 +174,44 @@ class SsrfModule(BaseModule):
                 results.append(record)
 
                 if internal or reflected_callback:
+                    if internal:
+                        severity = "high"
+                        title = f"Potential SSRF via parameter '{name}' ({label})"
+                        description = (
+                            "The response changed after injecting a controlled URL and "
+                            "contains internal-service data. Confirm the server actually "
+                            "made the request."
+                        )
+                        evidence = (
+                            f"payload: {payload}\n"
+                            f"indicators: {', '.join(internal)}"
+                        )
+                        confidence = "medium"
+                    else:
+                        severity = "medium"
+                        title = (
+                            f"Potential SSRF (callback value reflected) via "
+                            f"parameter '{name}' ({label})"
+                        )
+                        description = (
+                            "The controlled callback URL was reflected in the response, "
+                            "but no internal data was observed. This may be simple "
+                            "reflection rather than an outbound request; confirm with the "
+                            "callback log before reporting."
+                        )
+                        evidence = (
+                            f"payload: {payload}\n"
+                            "indicator: callback token reflected (no internal data)"
+                        )
+                        confidence = "low"
                     findings.append(
                         Finding(
-                            title=f"Potential SSRF via parameter '{name}' ({label})",
-                            severity="high",
+                            title=title,
+                            severity=severity,
                             category="ssrf",
                             target=probe_url,
-                            description=(
-                                "The response changed after injecting a controlled URL and "
-                                "contains internal-service or callback data. Confirm the "
-                                "server actually made the request."
-                            ),
-                            evidence=(
-                                f"payload: {payload}\n"
-                                f"indicators: {', '.join(internal) or 'callback token reflected'}"
-                            ),
+                            description=description,
+                            evidence=evidence,
                             remediation=(
                                 "Allowlist outbound destinations, block link-local/loopback "
                                 "ranges and metadata endpoints, and do not reflect raw fetch "
@@ -197,7 +220,7 @@ class SsrfModule(BaseModule):
                             references=[
                                 "https://cheatsheetseries.owasp.org/cheatsheets/Server_Side_Request_Forgery_Prevention_Cheat_Sheet.html"
                             ],
-                            confidence="medium",
+                            confidence=confidence,
                         )
                     )
                     break

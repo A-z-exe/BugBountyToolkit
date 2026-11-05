@@ -9,6 +9,7 @@ from urllib.parse import urlparse, urlunparse
 from .context import ScanContext
 from .findings import Finding
 from .target import Target
+from .utils import same_site_host
 
 # ---------------------------------------------------------------------------
 # Entry point resolution
@@ -64,7 +65,11 @@ def resolve_web_entry(
         resp = ctx.http.get(url, timeout=timeout)
         if resp is None:
             continue
-        base = clean_web_base(resp.url or url)
+        final_url = resp.url or url
+        if not same_site_host(target.host, urlparse(final_url).hostname):
+            # A redirect to another host must not redefine the scanned origin.
+            final_url = url
+        base = clean_web_base(final_url)
         if not base.startswith(("http://", "https://")):
             base = clean_web_base(url)
         ctx.remember("web_entry", {"url": base, "response": resp})
@@ -313,28 +318,29 @@ def check_transport(ctx: ScanContext, url: str, scheme: str) -> List[Finding]:
                 )
             )
         else:
-            findings.append(
-                Finding(
-                    title="HTTPS is available but not enforced",
-                    severity="high",
-                    category="transport",
-                    target=url,
-                    description=(
-                        "The site is still served over HTTP even though an HTTPS listener "
-                        "answers. Every request and the session cookie remain exposed."
-                    ),
-                    evidence=f"HTTPS endpoint responded with HTTP {https_resp.status_code}",
-                    remediation=(
-                        "Redirect all HTTP traffic to HTTPS (301), update absolute URLs and "
-                        "set the Secure flag on session cookies."
-                    ),
-                    confidence="high",
+            if https_resp.status_code < 400:
+                findings.append(
+                    Finding(
+                        title="HTTPS is available but not enforced",
+                        severity="high",
+                        category="transport",
+                        target=url,
+                        description=(
+                            "The site is still served over HTTP even though an HTTPS listener "
+                            "answers. Every request and the session cookie remain exposed."
+                        ),
+                        evidence=f"HTTPS endpoint responded with HTTP {https_resp.status_code}",
+                        remediation=(
+                            "Redirect all HTTP traffic to HTTPS (301), update absolute URLs and "
+                            "set the Secure flag on session cookies."
+                        ),
+                        confidence="high",
+                    )
                 )
-            )
     elif scheme == "https":
         http_url = urlunparse(("http", parsed.netloc, path, "", "", ""))
         http_resp = ctx.http.get(http_url, allow_redirects=False, timeout=timeout)
-        if http_resp is not None:
+        if http_resp is not None and http_resp.status_code < 400:
             location = http_resp.headers.get("Location", "")
             redirected = http_resp.status_code in (301, 302, 307, 308) and location.lower().startswith(
                 "https://"

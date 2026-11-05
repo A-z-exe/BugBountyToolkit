@@ -41,7 +41,12 @@ def _version_tuple(value: str) -> Tuple[int, ...]:
 def _is_older(installed: str, latest: str) -> bool:
     left = _version_tuple(installed)
     right = _version_tuple(latest)
-    return bool(left and right and left < right)
+    if not left or not right:
+        return False
+    width = max(len(left), len(right))
+    left += (0,) * (width - len(left))
+    right += (0,) * (width - len(right))
+    return left < right
 
 
 class WordpressModule(BaseModule):

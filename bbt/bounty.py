@@ -9,6 +9,7 @@ PoC files are written only with ``--write-pocs --i-have-authorization``.
 from __future__ import annotations
 
 import re
+import shlex
 from pathlib import Path
 from typing import Dict, List, Sequence
 
@@ -139,7 +140,12 @@ def _steps(finding: Finding) -> List[str]:
 
 
 def _poc_script(finding: Finding) -> str:
-    target = (finding.target or "").replace("'", "'\\''")
+    # Quotes and newlines in a target must never be able to escape the
+    # assignment and add extra shell commands to the generated script.
+    raw_target = "".join(
+        char if char.isprintable() else " " for char in (finding.target or "")
+    ).strip()
+    target = shlex.quote(raw_target)
     category = (finding.category or "").lower()
     title = finding.title.lower()
     header = (
@@ -151,7 +157,7 @@ def _poc_script(finding: Finding) -> str:
     )
     if category == "authz" or "bola" in title or "idor" in title:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "# Account A owns the object; account B must not be able to read it.\n"
             "curl -sS -o /dev/null -w 'A status: %%{http_code}\\n' \\\n"
             "  -H 'Authorization: Bearer <ACCOUNT_A_TOKEN>' \"$URL\"\n\n"
@@ -161,7 +167,7 @@ def _poc_script(finding: Finding) -> str:
         ) % target
     elif "ssrf" in category:
         body = (
-            "URL='%s'\n"
+            "URL=%s\n"
             "CALLBACK='<CALLBACK_URL>'\n\n"
             "# Replace CALLBACK with a URL you control, then check your callback log.\n"
             "curl -sS -D - -o /dev/null --max-time 15 \"$URL\"\n\n"
@@ -169,31 +175,31 @@ def _poc_script(finding: Finding) -> str:
         ) % target
     elif "sql" in category:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "# Baseline and quote payload; compare for a database error.\n"
             "curl -sS -D - -o /dev/null --max-time 15 \"$URL\"\n\n"
             "echo 'Send the quoted variant from the report evidence and compare.'\n"
         ) % target
     elif "xss" in category or "cross-site scripting" in title:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "# Open this URL in a browser profile you control and check execution.\n"
             "echo \"$URL\"\n"
         ) % target
     elif "redirect" in category or "redirect" in title:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "curl -sS -I --max-time 15 \"$URL\"\n"
             "# Check the Location header; it should point off-site for the PoC.\n"
         ) % target
     elif "cors" in category:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "curl -sS -I --max-time 15 -H 'Origin: https://example.com' \"$URL\"\n"
         ) % target
     else:
         body = (
-            "URL='%s'\n\n"
+            "URL=%s\n\n"
             "curl -sS -o /dev/null -w 'status: %%{http_code} bytes: %%{size_download}\\n' \\\n"
             "  --max-time 15 \"$URL\"\n"
         ) % target

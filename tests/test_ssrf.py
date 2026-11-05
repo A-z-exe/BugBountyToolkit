@@ -36,6 +36,27 @@ class SsrfTests(unittest.TestCase):
         ssrf = [finding for finding in findings if finding.category == "ssrf"]
         self.assertTrue(any(finding.severity == "high" for finding in ssrf))
 
+    def test_reflection_only_is_medium_confidence_low(self):
+        def handler(method, url, kwargs):
+            return FakeResponse(200, f"<html>echo {url}</html>", url=url)
+
+        config = Config(
+            rate=0,
+            ssrf_enabled=True,
+            ssrf_callback="https://callback.example",
+            max_pages=0,
+        )
+        ctx = FakeContext(http=FakeHttp(handler), config=config)
+        findings = SsrfModule(ctx).run(parse_target("http://target/?url=http://example.com"))
+        reflected = [
+            finding
+            for finding in findings
+            if "callback value reflected" in finding.title.lower()
+        ]
+        self.assertEqual(len(reflected), 1)
+        self.assertEqual(reflected[0].severity, "medium")
+        self.assertEqual(reflected[0].confidence, "low")
+
     def test_callback_probes_are_recorded(self):
         config = Config(
             rate=0,

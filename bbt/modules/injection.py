@@ -35,6 +35,14 @@ SQL_ERROR_SIGNATURES = [
     "microsoft ole db provider",
     "syntax error at or near",
     "sqlstate",
+    "mariadb server",
+    "microsoft access driver",
+    "sqlcode=",
+    "informix",
+    "firebird",
+    "sybase",
+    "sql server native client",
+    "warning: pg_",
 ]
 
 REDIRECT_PARAMS = {"redirect", "redirect_uri", "redirect_url", "next", "url",

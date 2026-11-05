@@ -148,10 +148,14 @@ def render_markdown(ctx: ScanContext, mode: str, duration: float) -> str:
 def write_reports(ctx: ScanContext, mode: str, duration: float) -> Tuple[Path, Path]:
     md_path = ctx.artifact("SECURITY_REPORT.md")
     md_path.write_text(render_markdown(ctx, mode, duration), encoding="utf-8")
+    ctx.register_artifact("report", md_path)
 
     chains = build_attack_paths(ctx.findings)
     score = risk_score(ctx.findings, chains)
     write_bounty_reports(ctx, mode, duration, score, chains)
+
+    json_path = ctx.artifact("scan_summary.json")
+    ctx.register_artifact("scan_summary", json_path)
     summary: Dict[str, object] = {
         "tool": "BBT",
         "version": __version__,
@@ -169,7 +173,6 @@ def write_reports(ctx: ScanContext, mode: str, duration: float) -> Tuple[Path, P
             for key, path in ctx.artifacts.items()
         },
     }
-    json_path = ctx.artifact("scan_summary.json")
     json_path.write_text(
         json.dumps(summary, indent=2, ensure_ascii=False, default=str),
         encoding="utf-8",

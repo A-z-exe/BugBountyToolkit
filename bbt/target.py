@@ -157,6 +157,8 @@ def parse_target(value: str, default_scheme: str = "https") -> Target:
     """
     if not value or not value.strip():
         raise ValueError("empty target")
+    if any(ord(char) < 0x20 or ord(char) == 0x7F for char in value):
+        raise ValueError("target contains control characters")
     raw = value.strip()
 
     # --- Explicit URL -------------------------------------------------

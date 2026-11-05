@@ -153,6 +153,11 @@ DEFAULT_DIR_WORDS: List[str] = [
 # ---------------------------------------------------------------------------
 
 _SAFE_RE = re.compile(r"[^\w\-.]+")
+_WINDOWS_RESERVED = {
+    "CON", "PRN", "AUX", "NUL",
+    *(f"COM{i}" for i in range(1, 10)),
+    *(f"LPT{i}" for i in range(1, 10)),
+}
 
 
 def safe_filename(value: str, fallback: str = "target") -> str:
@@ -161,7 +166,11 @@ def safe_filename(value: str, fallback: str = "target") -> str:
     value = value.replace("://", "_")
     value = _SAFE_RE.sub("_", value)
     value = value.strip("._") or fallback
-    return value[:120]
+    value = value[:120]
+    stem = value.split(".")[0].upper()
+    if stem in _WINDOWS_RESERVED:
+        value = "_" + value
+    return value
 
 
 def now_stamp() -> str:
@@ -271,6 +280,25 @@ def is_private_ip(value: str) -> bool:
     except ValueError:
         return False
     return bool(addr.is_private or addr.is_loopback or addr.is_link_local)
+
+
+def same_site_host(left: Optional[str], right: Optional[str]) -> bool:
+    """Whether two hostnames belong to the same site for redirect purposes.
+
+    Exact matches and the ``www.`` variant are accepted; anything else
+    (including a missing host) is rejected so scans never drift off the
+    authorized target.
+    """
+
+    def normalize(host: str) -> str:
+        host = host.strip().lower().rstrip(".")
+        if host.startswith("www."):
+            host = host[4:]
+        return host
+
+    if not left or not right:
+        return False
+    return normalize(left) == normalize(right)
 
 
 def expand_cidr(cidr: str, max_hosts: int = 1024) -> List[str]:

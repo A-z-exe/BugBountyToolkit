@@ -12,6 +12,7 @@ from urllib.parse import urljoin, urlparse
 
 import requests
 
+from . import __version__
 from .context import ScanContext
 
 _SCRIPT_RE = re.compile(r"""<script[^>]+src=["']([^"']+\.js[^"']*)["']""", re.I)
@@ -30,7 +31,6 @@ TAKEOVER_SERVICES: Dict[str, Dict[str, object]] = {
         "service": "Amazon S3",
         "markers": ("nosuchbucket", "the specified bucket does not exist"),
     },
-    "cloudfront.net": {"service": "CloudFront", "markers": ("bad request", "cloudfront")},
     "azurewebsites.net": {
         "service": "Azure",
         "markers": ("error 404 - web app not found", "web app not found"),
@@ -41,30 +41,19 @@ TAKEOVER_SERVICES: Dict[str, Dict[str, object]] = {
     "netlify.com": {"service": "Netlify", "markers": ("not found - request id",)},
     "vercel.app": {"service": "Vercel", "markers": ("the deployment could not be found",)},
     "now.sh": {"service": "Vercel", "markers": ("the deployment could not be found",)},
-    "pages.dev": {"service": "Cloudflare Pages", "markers": ("project not found",)},
     "workers.dev": {"service": "Cloudflare Workers", "markers": ("there is nothing here yet",)},
-    "surge.sh": {"service": "Surge", "markers": ("project not found",)},
-    "bitbucket.io": {"service": "Bitbucket", "markers": ("repository not found",)},
     "ghost.io": {"service": "Ghost", "markers": ("domain not configured",)},
     "readme.io": {"service": "ReadMe", "markers": ("project doesnt exist", "project doesn't exist")},
-    "statuspage.io": {"service": "Statuspage", "markers": ("page not found",)},
     "zendesk.com": {"service": "Zendesk", "markers": ("this help center no longer exists",)},
     "freshdesk.com": {"service": "Freshdesk", "markers": ("account not found",)},
     "pantheonsite.io": {"service": "Pantheon", "markers": ("404 unknown site",)},
-    "wpengine.com": {"service": "WP Engine", "markers": ("site not found",)},
     "myshopify.com": {"service": "Shopify", "markers": ("sorry, this shop is currently unavailable",)},
     "webflow.io": {"service": "Webflow", "markers": ("this site is not published",)},
     "unbounce.com": {"service": "Unbounce", "markers": ("this page is no longer available",)},
     "tilda.ws": {"service": "Tilda", "markers": ("the page you are looking for doesn't exist",)},
-    "fly.dev": {"service": "Fly.io", "markers": ("app not found",)},
-    "onrender.com": {"service": "Render", "markers": ("not found",)},
-    "railway.app": {"service": "Railway", "markers": ("application not found",)},
-    "notion.site": {"service": "Notion", "markers": ("page not found",)},
     "bubbleapps.io": {"service": "Bubble", "markers": ("this app is not available",)},
     "tumblr.com": {"service": "Tumblr", "markers": ("there's nothing here",)},
-    "wordpress.com": {"service": "WordPress.com", "markers": ("doesn’t exist", "doesn't exist")},
     "desk.com": {"service": "Desk", "markers": ("this help center no longer exists",)},
-    "helpjuice.com": {"service": "Helpjuice", "markers": ("not found",)},
 }
 
 
@@ -163,12 +152,14 @@ def enumerate_subdomains(domain: str, max_names: int = 200) -> List[Dict[str, ob
             "https://crt.sh/",
             params={"q": "%." + domain, "output": "json"},
             timeout=25,
-            headers={"User-Agent": "BBT/%s" % "2.3"},
+            headers={"User-Agent": f"BBT/{__version__}"},
         )
         if response.status_code == 200:
             for row in response.json():
                 for value in str(row.get("name_value") or "").splitlines():
-                    value = value.strip().lower().lstrip("*.").rstrip(".")
+                    value = value.strip().lower().rstrip(".")
+                    while value.startswith("*."):
+                        value = value[2:]
                     if value == domain or value.endswith("." + domain):
                         names.add(value)
     except Exception:

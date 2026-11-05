@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from . import __version__
 from .utils import DEFAULT_DIR_WORDS, DEFAULT_WEB_PATHS, TOP_PORTS
 
 #: Modes accepted on the command line and in the interactive menu.
@@ -48,9 +49,14 @@ class Config:
     command_timeout: int = 300
     threads: int = 64
     rate: float = 30.0  # requests per second (0 disables throttling)
-    user_agent: str = "BBT/2.0 (+https://github.com/A-z-exe/BugBountyToolkit)"
-    verify_tls: bool = False  # internal sites frequently use self-signed certs
+    user_agent: str = field(
+        default_factory=lambda: (
+            f"BBT/{__version__} (+https://github.com/A-z-exe/BugBountyToolkit)"
+        )
+    )
+    verify_tls: bool = True  # disable with --insecure for self-signed internal sites
     follow_redirects: bool = True
+    max_redirects: int = 10  # per request; hops are pinned to the same site
     proxy: Optional[str] = None
     #: Extra headers applied to every request (authentication, custom UA, ...).
     headers: Dict[str, str] = field(default_factory=dict)
@@ -117,6 +123,7 @@ class Config:
         self.max_paths = max(0, int(self.max_paths))
         self.max_pages = max(0, int(self.max_pages))
         self.crawl_depth = max(1, int(self.crawl_depth))
+        self.max_redirects = max(1, int(self.max_redirects))
         self.max_injection_urls = max(0, int(self.max_injection_urls))
         self.max_injection_params = max(0, int(self.max_injection_params))
         self.max_authz_urls = max(0, int(self.max_authz_urls))

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from bbt.bounty import build_report, write_bounty_reports
+from bbt.bounty import _poc_script, build_report, write_bounty_reports
 from bbt.config import Config
 from bbt.context import ScanContext
 from bbt.findings import Finding, FindingsStore
@@ -89,6 +89,17 @@ class BountyReportTests(unittest.TestCase):
             self.assertFalse(any(path.name.startswith("poc-") for path in written))
             index = next(path for path in written if path.name == "index.md")
             self.assertIn("--write-pocs", index.read_text(encoding="utf-8"))
+
+    def test_poc_script_cannot_be_broken_out_of_by_newlines(self):
+        finding = Finding(
+            title="Possible reflected XSS",
+            severity="medium",
+            category="xss",
+            target="https://x/'\nrm -rf ~\n'",
+        )
+        script = _poc_script(finding)
+        self.assertNotIn("\nrm -rf ~\n", script)
+        self.assertIn("URL='https://x/", script)
 
     def test_index_lists_attack_paths(self):
         with tempfile.TemporaryDirectory() as tmp:

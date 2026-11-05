@@ -83,6 +83,16 @@ class CliOptionTests(unittest.TestCase):
         self.assertTrue(config.ssrf_enabled)
         self.assertEqual(config.ssrf_callback, "https://callback.example")
 
+    def test_tls_verification_is_on_by_default(self):
+        args = parse_arguments(["-t", "https://example.com", "-m", "web"])
+        self.assertTrue(build_config(args, headers={}, cookies={}).verify_tls)
+
+    def test_insecure_flag_disables_tls_verification(self):
+        args = parse_arguments(
+            ["-t", "https://example.com", "-m", "web", "--insecure"]
+        )
+        self.assertFalse(build_config(args, headers={}, cookies={}).verify_tls)
+
     def test_recon_and_report_options_reach_config(self):
         args = parse_arguments(
             [

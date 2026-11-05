@@ -80,6 +80,15 @@ class ParseTargetTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_target(value)
 
+    def test_control_characters_are_rejected(self):
+        for value in (
+            "https://example.com/\nrm -rf /",
+            "https://example.com/\x00",
+            "example.com\t",
+        ):
+            with self.assertRaises(ValueError):
+                parse_target(value)
+
 
 if __name__ == "__main__":
     unittest.main()

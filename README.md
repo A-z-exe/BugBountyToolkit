@@ -11,6 +11,29 @@ fully in pure Python (only `requests` is required) and uses external tools such 
 
 ---
 
+## ✨ What's new in 2.3.1
+
+Hardening release focused on scope safety and false positives:
+
+- **TLS verification is on by default.** Use `--insecure` only for self-signed
+  internal sites; BBT warns when verification is disabled, especially with
+  credentials configured. `--verify-tls` is kept as a no-op for compatibility.
+- **Redirects stay on the scanned site.** The HTTP client follows redirects
+  manually, rate limits every hop and stops at cross-site hops (exact host or
+  `www.` variant only). `resolve_web_entry` also refuses to adopt a cross-host
+  final URL.
+- **WordPress version comparison fixed** (`1.2` is no longer considered older
+  than `1.2.0`).
+- **Safer PoC scripts.** Targets are shell-quoted and control characters are
+  stripped, so a crafted URL cannot inject commands into a generated PoC.
+- **Fewer false positives.** Callback-reflection-only SSRF is reported as
+  medium/low confidence, generic takeover markers were removed, and HTTP
+  401/403/404 responses are no longer treated as served content in the
+  transport check.
+- Smaller fixes: version-derived User-Agent, Windows reserved filenames in
+  artifacts, wildcard CNAME normalization, a per-page crawler link cap, extra
+  database error signatures and report/summary registered as artifacts.
+
 ## ✨ What's new in 2.3
 
 - **Bug-bounty report drafts** — every finding gets a Markdown draft with
@@ -248,7 +271,8 @@ account).
 | `--i-have-authorization` | Confirm written permission; required for `--write-pocs`. |
 | `--jwt` | JWT/bearer token to analyse locally (repeatable). |
 | `--proxy` | Proxy URL for HTTP(S) requests. |
-| `--verify-tls` | Verify TLS certificates (default off for self-signed internal sites). |
+| `--insecure` | Do not verify TLS certificates (self-signed internal sites). |
+| `--verify-tls` | Verify TLS certificates (default; kept for compatibility). |
 | `--no-optional-tools` | Never call external tools. |
 | `--aggressive` | Enable intrusive checks (time-based SQLi). |
 | `-o, --output` | Output root directory (default `results`). |
@@ -396,8 +420,11 @@ report/PoC generation, attack-path correlation, CLI options and findings.
 
 - Commands are executed **without a shell** (`subprocess` with argument lists), so
   there is no command injection.
-- HTTP requests are rate limited and time-bounded; the crawler never leaves the
-  target origin.
+- Redirects are followed only while they stay on the scanned site; the crawler
+  never leaves the target origin.
+- TLS certificates are verified by default. `--insecure` disables verification
+  for self-signed internal sites and prints a warning (stronger when
+  credentials are configured).
 - Content discovery probes common sensitive files; injection probes send benign
   payloads. Some programs forbid automated scanners entirely — check the rules first.
 - Intrusive payloads (time-based SQLi) run only with `--aggressive`.
@@ -408,8 +435,6 @@ report/PoC generation, attack-path correlation, CLI options and findings.
   dump data, change state or execute a shell. They require `--i-have-authorization`.
 - Subdomain takeover recon never claims a dangling name; it only fingerprints it.
 - Reports are drafts for human review; BBT never submits them automatically.
-- TLS verification is off by default because internal sites commonly use self-signed
-  certificates; enable it with `--verify-tls`.
 
 ---
 
@@ -439,6 +464,25 @@ report/PoC generation, attack-path correlation, CLI options and findings.
 ---
 
 ## 🗒️ Changelog
+
+### 2.3.1
+
+- Enabled TLS certificate verification by default; added `--insecure` with a
+  warning when verification is disabled.
+- Pinned redirects to the scanned site (same host or `www.` variant), added a
+  per-hop rate limit and a configurable `max_redirects`; cross-host final URLs
+  are no longer adopted as the web entry point.
+- Fixed WordPress version comparison when segments are omitted (`1.2` vs
+  `1.2.0`).
+- Shell-quoted PoC targets and stripped control characters to prevent command
+  injection in generated scripts; target parsing now rejects control characters.
+- Reduced false positives: reflection-only SSRF is medium/low confidence,
+  generic takeover markers were removed, and protected/error HTTP endpoints are
+  no longer reported as served content.
+- Hardening: version-derived User-Agent, Windows reserved filename handling,
+  wildcard CNAME normalization, 5,000-link per-page crawler cap, report and
+  scan summary registered as artifacts, and more database error signatures.
+- Expanded the offline suite to 120 tests.
 
 ### 2.3.0
 

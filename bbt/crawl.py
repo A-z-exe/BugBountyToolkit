@@ -28,6 +28,7 @@ _SKIP_EXTENSIONS = (
 )
 
 _MAX_HTML_BYTES = 1_500_000
+_MAX_LINKS_PER_PAGE = 5000
 
 #: Links that perform a state change on GET; never crawl them automatically.
 _UNSAFE_TOKENS = ("logout", "signout", "sign-out", "log-out", "destroy-session")
@@ -178,7 +179,7 @@ def crawl_site(
             }
         )
 
-        for raw_link in parser.links:
+        for raw_link in parser.links[:_MAX_LINKS_PER_PAGE]:
             raw_link = raw_link.strip()
             if not raw_link:
                 continue

@@ -91,6 +91,15 @@ class CrawlTests(unittest.TestCase):
         self.assertEqual(result["pages"], [])
         self.assertEqual(self.http.requested, [])
 
+    def test_links_per_page_are_capped(self):
+        html = "<html><body>" + "".join(
+            f'<a href="/page{i}">p</a>' for i in range(5001)
+        ) + "</body></html>"
+        http = FakeHttp({"http://site/": html})
+        ctx = FakeContext(http)
+        result = crawl_site(ctx, "http://site/", max_pages=1)
+        self.assertEqual(len(result["urls"]), 5000)
+
 
 if __name__ == "__main__":
     unittest.main()

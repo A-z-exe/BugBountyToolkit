@@ -177,6 +177,15 @@ class WebEntryTests(unittest.TestCase):
         self.assertIsNone(resp)
         self.assertEqual(seen, ["https://example.com/"])
 
+    def test_cross_host_redirect_does_not_redefine_entry(self):
+        def handler(url, kwargs):
+            return FakeResponse(200, "<html></html>", {}, url="https://evil.example/")
+
+        base_url, _ = resolve_web_entry(
+            FakeContext(FakeHttp(handler)), parse_target("https://example.com")
+        )
+        self.assertEqual(base_url, "https://example.com/")
+
 
 class TransportTests(unittest.TestCase):
     def test_http_only_site_is_high_severity(self):
@@ -221,6 +230,17 @@ class TransportTests(unittest.TestCase):
         )
         self.assertEqual(len(findings), 1)
         self.assertEqual(findings[0].severity, "medium")
+
+    def test_protected_http_endpoint_is_not_reported_as_served_content(self):
+        def handler(url, kwargs):
+            if url.startswith("https://"):
+                return FakeResponse(403, "forbidden", {})
+            return FakeResponse(403, "forbidden", {})
+
+        findings = check_transport(
+            FakeContext(FakeHttp(handler)), "http://target/", "http"
+        )
+        self.assertEqual(findings, [])
 
 
 if __name__ == "__main__":

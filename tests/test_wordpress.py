@@ -3,7 +3,7 @@ import unittest
 from urllib.parse import urlparse
 
 from bbt.config import Config
-from bbt.modules.wordpress import WordpressModule
+from bbt.modules.wordpress import WordpressModule, _is_older
 from bbt.target import parse_target
 from tests.fakes import FakeContext, FakeHttp, FakeResponse
 
@@ -44,6 +44,12 @@ def _handler(method, url, kwargs):
 
 
 class WordPressTests(unittest.TestCase):
+    def test_version_comparison_pads_missing_segments(self):
+        self.assertFalse(_is_older("1.2", "1.2.0"))
+        self.assertFalse(_is_older("6.5.0", "6.5"))
+        self.assertTrue(_is_older("1.2", "1.2.1"))
+        self.assertTrue(_is_older("6.4.3", "6.5"))
+
     def setUp(self):
         self.ctx = FakeContext(http=FakeHttp(_handler), config=Config(rate=0))
         self.module = WordpressModule(self.ctx)

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 from typing import Dict, Optional
+from urllib.parse import urljoin, urlparse
 
 import requests
 
@@ -19,7 +20,7 @@ except Exception:  # pragma: no cover
     pass
 
 from .config import Config
-from .utils import RateLimiter
+from .utils import RateLimiter, same_site_host
 
 log = logging.getLogger("bbt.http")
 
@@ -67,15 +68,58 @@ class HttpClient:
         self.limiter.wait()
         kwargs.setdefault("timeout", self.config.timeout)
         kwargs.setdefault("verify", self.config.verify_tls)
-        if allow_redirects is None:
-            allow_redirects = self.config.follow_redirects
+        follow = self.config.follow_redirects if allow_redirects is None else allow_redirects
         try:
-            return self.session.request(
-                method, url, allow_redirects=allow_redirects, **kwargs
+            response = self.session.request(
+                method, url, allow_redirects=False, **kwargs
             )
+            if not follow:
+                return response
+            return self._follow_redirects(response, method, **kwargs)
         except requests.exceptions.RequestException as exc:
             self.log.debug("request failed %s %s: %s", method, url, exc)
             return None
+
+    def _follow_redirects(
+        self, response: requests.Response, method: str, **kwargs
+    ) -> requests.Response:
+        """Follow redirects only while they stay on the scanned site.
+
+        ``requests`` follows every hop by default, which lets a single
+        redirect take a scan to a different host (a common way to escape the
+        authorized scope or poison results). Each hop is rate limited and
+        cross-site hops are returned to the caller unfollowed.
+        """
+        original_host = urlparse(response.url or "").hostname
+        current = response
+        next_method = method.upper()
+        max_redirects = max(1, int(getattr(self.config, "max_redirects", 10)))
+        for _ in range(max_redirects):
+            if not getattr(current, "is_redirect", False):
+                return current
+            location = current.headers.get("Location")
+            if not location:
+                return current
+            next_url = urljoin(current.url, location)
+            target_host = urlparse(next_url).hostname
+            if not same_site_host(original_host, target_host):
+                self.log.info(
+                    "not following cross-site redirect %s -> %s",
+                    current.url,
+                    next_url,
+                )
+                return current
+            if current.status_code == 303 or (
+                current.status_code in (301, 302) and next_method == "POST"
+            ):
+                next_method = "GET"
+                for key in ("data", "json", "files"):
+                    kwargs.pop(key, None)
+            self.limiter.wait()
+            current = self.session.request(
+                next_method, next_url, allow_redirects=False, **kwargs
+            )
+        return current
 
     def get(self, url: str, **kwargs) -> Optional[requests.Response]:
         return self.request("GET", url, **kwargs)

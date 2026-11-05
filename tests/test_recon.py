@@ -51,6 +51,11 @@ class TakeoverFingerprintTests(unittest.TestCase):
         self.assertIsNotNone(takeover_marker("foo.github.io", body))
         self.assertIsNone(takeover_marker("foo.github.io", "<h1>My live blog</h1>"))
 
+    def test_generic_error_pages_are_not_takeover_evidence(self):
+        self.assertIsNone(detect_takeover_service("foo.cloudfront.net"))
+        self.assertIsNone(takeover_marker("foo.onrender.com", "not found"))
+        self.assertIsNone(takeover_marker("foo.github.io", "404 page not found"))
+
 
 class SubdomainModuleTests(unittest.TestCase):
     def test_takeover_fingerprint_is_reported(self):
