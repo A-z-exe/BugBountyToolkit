@@ -57,6 +57,19 @@ MODE_MODULES: Dict[str, List[str]] = {
         "ssrf",
         "injection",
     ],
+    # Auto mode is executed by bbt.hunt.HuntOrchestrator; the same module set is
+    # registered here so direct Scanner users get sensible behaviour.
+    "auto": [
+        "info",
+        "subdomain",
+        "network",
+        "web",
+        "wordpress",
+        "api",
+        "authz",
+        "ssrf",
+        "injection",
+    ],
 }
 
 FULL_ORDER = MODE_MODULES["full"]

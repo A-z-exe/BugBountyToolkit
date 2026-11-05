@@ -74,6 +74,18 @@ class FindingsStore:
                 added += 1
         return added
 
+    def retain(self, predicate) -> int:
+        """Keep only findings matching ``predicate``; returns removed count."""
+        kept = [finding for finding in self._items if predicate(finding)]
+        removed = len(self._items) - len(kept)
+        if removed:
+            self._items = kept
+            self._seen = {
+                (finding.title.strip().lower(), finding.target.strip().lower())
+                for finding in kept
+            }
+        return removed
+
     def __iter__(self):
         return iter(self._items)
 

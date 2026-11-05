@@ -30,6 +30,11 @@ def render_markdown(ctx: ScanContext, mode: str, duration: float) -> str:
     lines.append("# Security Assessment Report\n")
     lines.append(f"- **Target:** `{target.display}`")
     lines.append(f"- **Mode:** `{mode}`")
+    scope_entries = ctx.recall("hunt_scope") or []
+    if scope_entries:
+        lines.append(
+            "- **Authorized scope:** " + ", ".join(f"`{entry}`" for entry in scope_entries)
+        )
     lines.append(
         f"- **Date:** {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
     )
@@ -80,6 +85,33 @@ def render_markdown(ctx: ScanContext, mode: str, duration: float) -> str:
             lines.append("**Verify / exploit manually (authorized scope only):**")
             for step_number, step in enumerate(steps, 1):
                 lines.append(f"{step_number}. {step}")
+            lines.append("")
+
+    plan = ctx.recall("hunt_plan") or []
+    tool_runs = ctx.recall("tool_runs") or []
+    if plan or tool_runs:
+        lines.append("## External Tool Runs\n")
+        if plan:
+            lines.append("Planned tool chain: " + ", ".join(f"`{name}`" for name in plan) + "\n")
+        if tool_runs:
+            lines.append("| Tool | Status | Duration | Findings | Artifacts |")
+            lines.append("|------|--------|----------|----------|-----------|")
+            for run in tool_runs:
+                artifacts = run.get("artifacts") or []
+                links = ", ".join(
+                    f"[{Path(path).name}]({_relative(str(path), ctx.output_dir)})"
+                    for path in artifacts[:3]
+                ) or "-"
+                lines.append(
+                    f"| {run.get('name', '?')} | {run.get('status', '?')} | "
+                    f"{run.get('duration_seconds', 0)}s | {run.get('findings', 0)} | {links} |"
+                )
+            for run in tool_runs:
+                note = run.get("note")
+                if note and run.get("status") != "ran":
+                    lines.append(
+                        f"\n> **{run.get('name')}** ({run.get('status')}): {note}"
+                    )
             lines.append("")
 
     lines.append("## Findings\n")

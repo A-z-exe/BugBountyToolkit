@@ -11,6 +11,58 @@ fully in pure Python (only `requests` is required) and uses external tools such 
 
 ---
 
+## ✨ What's new in 2.5.1 — searchable desktop launcher
+
+- **BBT in the application menu.** `scripts/install-desktop.sh` installs
+  `~/.local/bin/bbt` and a menu entry named *BBT - Bug Bounty Toolkit* with
+  `bbt`, *bug bounty*, *recon* and *scan* keywords, so searching for the tool in
+  the Kali/XFCE application menu finds and launches it.
+- **Useful terminal window.** The menu entry prints `bbt --help` and then opens
+  an interactive shell in the project directory with `bbt` already on `PATH`,
+  instead of closing immediately.
+- The `bbt` console script is available outside the virtualenv as well; run the
+  installer once after `pip install -e .`.
+
+## ✨ What's new in 2.5.0 — JavaScript-aware endpoint discovery
+
+- **Katana integration in `-m auto`.** With `--deep`, BBT crawls the target with
+  `katana` (JavaScript parsing, depth 2, same-FQDN scope, rate-limited, bounded
+  crawl duration) and saves `tools/katana.jsonl`.
+- **Notable endpoint summary.** Parameterised, access-controlled (401/403) and
+  sensitive-looking paths (`admin`, `api`, `upload`, `debug`, `graphql`, …) are
+  summarised in one info finding with evidence lines; everything else stays in
+  the JSONL artifact. Results are re-checked against the authorized scope.
+- **Bounded by design.** Katana uses `-fs fqdn` so it does not wander onto other
+  hosts, `-mdp 150` to cap pages, and `-ct` to stop before the global
+  `--command-timeout`. Partial output is kept if the crawl is cut short.
+
+## ✨ What's new in 2.4.0 — autonomous, scope-gated hunts
+
+`-m auto` turns BBT into a one-command orchestrator: give it a URL plus the
+program's scope, and it plans and runs the built-in modules **and** the external
+tools installed on the machine, then writes one correlated report.
+
+- **Scope gate** — every target, URL and external-tool result is checked against
+  a scope file (`--scope-file`) or `--scope-host` entries. Private, loopback,
+  link-local and cloud-metadata addresses are refused unless `--allow-private`
+  is used in an isolated lab.
+- **Adaptive tool plan** — `httpx` and `nuclei` always run; `ffuf`/`nikto`/
+  `subfinder` with `--deep`; `wpscan` when WordPress is detected; `sqlmap` only
+  with `--aggressive` on a parameterised URL; screenshots with `--screenshots`.
+- **Three hard requirements:** `--authorized` (or `--i-have-authorization` /
+  `BBT_AUTHORIZED=1`), the legal confirmation, and a resolvable in-scope target.
+- **Conservative tool flags:** nuclei excludes intrusive/fuzzing/brute-force/DoS/
+  default-login/headless tags and disables interactsh; nikto uses tuning `123b`;
+  sqlmap stops after confirming an injection and never dumps data.
+- **One report** — `SECURITY_REPORT.md` gains an *Authorized scope* line and an
+  *External Tool Runs* table; `hunt_summary.json` records the plan, raw tool runs
+  and artifacts. Per-finding bounty drafts still land in `bounty_reports/`.
+
+```bash
+printf 'example.com\n*.example.com\n' > scope.txt
+bbt -t https://app.example.com -m auto --authorized --scope-file scope.txt --deep
+```
+
 ## ✨ What's new in 2.3.1
 
 Hardening release focused on scope safety and false positives:
@@ -169,6 +221,19 @@ pip install -e .
 If your distribution blocks system-wide pip installs (`externally-managed-environment`),
 use the venv above or `pipx install .`.
 
+### Desktop launcher (application-menu search)
+
+After installing, run once as your desktop user:
+
+```bash
+bash scripts/install-desktop.sh
+```
+
+This creates `~/.local/bin/bbt` and
+`~/.local/share/applications/bbt.desktop`. Search the application menu for
+**BBT** or **bug bounty** and the tool appears. If `~/.local/bin` is not on your
+`PATH` yet, log out and back in (Kali's `.profile` adds it automatically).
+
 You can always run the historical entry point without installing:
 
 ```bash
@@ -207,6 +272,9 @@ bbt -t https://blog.example.com -m web --max-pages 10
 
 # Local web app by hostname, then the public one, in one session
 python bugbounty_tool.py -t http://portal.local -t https://portal.example.com -m web --scope auto
+
+# Autonomous hunt: BBT modules + installed external tools, scope-gated
+bbt -t https://app.example.com -m auto --authorized --scope-file scope.txt --deep
 ```
 
 > Use a target you are authorized to test. A scan of a third-party site without
@@ -227,11 +295,44 @@ python bugbounty_tool.py -t <target> -m web        # crawl + web assessment
 python bugbounty_tool.py -t <target> -m api        # API review
 python bugbounty_tool.py -t <target> -m injection  # injection checks
 python bugbounty_tool.py -t <target> -m full       # everything (local first)
+python bugbounty_tool.py -t <target> -m auto --authorized --scope-file scope.txt
 ```
 
 WordPress, SSRF and authz checks run inside `-m web`, `-m api` and `-m full`
 (SSRF only when enabled with `--ssrf`/`--ssrf-url`; authz only with a second
 account).
+
+### Autonomous hunt mode (`-m auto`)
+
+`auto` is a **planner on top of the existing modules**, not a separate scanner:
+
+1. Refuses the target unless it is in `--scope-file` / `--scope-host` (or, when
+   neither is given, exactly the target host) and resolves to public addresses.
+2. Resolves the real HTTP(S) entry point and detects WordPress.
+3. Runs the `full` module set, then chooses external tools:
+   `httpx` → `nuclei` → (`katana`, `ffuf`, `nikto` with `--deep`) → `wpscan` for
+   WordPress → `subfinder` for in-scope subdomains (`--deep`) → `gowitness`
+   (`--screenshots`) → `sqlmap` (`--aggressive`, query parameters only).
+4. Filters every tool result against the scope again (redirects included), caps
+   tool findings with `--max-tool-findings`, and writes the report.
+
+Each external tool is capped by `--command-timeout` (default 300s). `nuclei`
+(`-max-time`) and `ffuf` (`-maxtime`) stop gracefully just before that limit and
+keep partial results, so a large template set does not wedge the run.
+
+Scope file syntax (one entry per line, `#` comments allowed):
+
+```text
+example.com          # apex + all subdomains
+*.example.com        # subdomains only
+https://app.example.com:8443
+203.0.113.10
+203.0.113.0/24
+```
+
+**It does not exploit anything.** "Exploit" in the output means verification
+steps and safe PoCs for a human to review; sqlmap runs in boolean/error mode and
+stops at confirmation. Use `--insecure` only for self-signed internal hosts.
 
 ### Command line options
 
@@ -239,7 +340,7 @@ account).
 | --- | --- |
 | `-t, --target` | Target (URL, host, IP or CIDR). Repeatable. |
 | `-f, --targets-file` | File with one target per line. |
-| `-m, --mode` | `info`, `network`, `web`, `api`, `injection`, `full`. |
+| `-m, --mode` | `info`, `network`, `web`, `api`, `injection`, `full`, `auto`. |
 | `--scope` | `auto` (local first), `local`, `remote`. |
 | `--scan-network` | Also TCP-scan the host behind each URL target. |
 | `--ports` | Port spec, e.g. `22,80,443,8000-8100`. |
@@ -268,7 +369,14 @@ account).
 | `--no-js-extract` | Do not parse same-origin JS bundles for API paths. |
 | `--no-bounty-reports` | Do not generate per-finding report drafts. |
 | `--write-pocs` | Generate safe verification PoC scripts (requires authorization flag). |
-| `--i-have-authorization` | Confirm written permission; required for `--write-pocs`. |
+| `--i-have-authorization` | Confirm written permission; required for `--write-pocs`/`auto`. |
+| `--authorized` | Alias for `--i-have-authorization`; required by `-m auto`. |
+| `--scope-file` | Authorized scope file for `-m auto` (host/URL/IP/CIDR per line). |
+| `--scope-host` | Authorized host/domain/URL/CIDR for `-m auto` (repeatable). |
+| `--deep` | Auto: also run `katana`, `ffuf`, `nikto` and `subfinder` (slower). |
+| `--screenshots` | Auto: capture a screenshot with `gowitness` when installed. |
+| `--max-tool-findings` | Global cap on findings accepted from external tools (default 200). |
+| `--allow-private` | Accept RFC1918/loopback targets (isolated labs only). |
 | `--jwt` | JWT/bearer token to analyse locally (repeatable). |
 | `--proxy` | Proxy URL for HTTP(S) requests. |
 | `--insecure` | Do not verify TLS certificates (self-signed internal sites). |
@@ -322,6 +430,8 @@ behind each URL.
 
 ## 📁 Output structure
 
+A normal scan (`-m web`, `-m full`, …) writes:
+
 ```
 results/
 ├── bbt.log                            # debug log for the whole run
@@ -354,6 +464,21 @@ results/
         └── robots.txt
 ```
 
+`-m auto` uses the same layout under `hunt_<stamp>/` and adds:
+
+```
+results/hunt_20260101_120000/
+├── session_summary.json               # every target, risk score
+└── http_app.example.com/
+    ├── hunt_summary.json              # plan, tool runs, scope, attack paths
+    ├── SECURITY_REPORT.md             # includes scope + external tool table
+    └── tools/
+        ├── httpx.jsonl                # raw tool output
+        ├── nuclei.jsonl
+        ├── katana.jsonl
+        └── ...
+```
+
 ---
 
 ## 🏗️ Project layout
@@ -363,6 +488,9 @@ bugbounty_tool.py          # entry point (python bugbounty_tool.py ...)
 bbt/
 ├── cli.py                 # argument parsing + interactive mode
 ├── core.py                # scanner orchestration, scope classification
+├── hunt.py                # autonomous orchestrator for `-m auto`
+├── scope.py               # scope policy + private/metadata address guards
+├── adapters.py            # external tool adapters, parsers and planner
 ├── config.py              # all tunables and limits
 ├── context.py             # shared state passed to modules
 ├── findings.py            # Finding model + aggregation
@@ -391,6 +519,8 @@ bbt/
     ├── subdomain.py
     └── injection.py
 tests/                     # unit tests (no network required)
+scripts/
+└── install-desktop.sh     # CLI launcher + searchable menu entry
 legacy/                    # the original v1 script, kept for reference only
 ```
 
@@ -412,7 +542,8 @@ The tests do not touch the network. They cover target parsing, scope
 classification, port specs, CIDR expansion, soft-404 handling, cookie flags,
 crawling, OpenAPI parsing, BOLA candidate generation, SSRF probes, WordPress
 detection, subdomain-takeover fingerprints, JS endpoint extraction, bounty
-report/PoC generation, attack-path correlation, CLI options and findings.
+report/PoC generation, attack-path correlation, scope policy, external-tool
+parsers, hunt planning, CLI options and findings.
 
 ---
 
@@ -434,6 +565,16 @@ report/PoC generation, attack-path correlation, CLI options and findings.
 - Generated PoCs are **verification only**: they replay a benign request and never
   dump data, change state or execute a shell. They require `--i-have-authorization`.
 - Subdomain takeover recon never claims a dangling name; it only fingerprints it.
+- `-m auto` refuses to start without `--authorized` (or `--i-have-authorization`
+  / `BBT_AUTHORIZED=1`) and the legal confirmation. Every target and
+  external-tool result is re-checked against the scope; findings outside it are
+  dropped. Private, loopback, link-local and cloud-metadata addresses are
+  rejected unless you pass `--allow-private` for an isolated lab.
+- External tools run with conservative flags: nuclei skips intrusive, fuzzing,
+  brute-force, DoS, default-login and headless tags and disables interactsh;
+  nikto uses tuning `123b`; sqlmap runs `--smart --technique=BE` and stops after
+  confirming injection. BBT does not dump data, escalate privileges, move
+  laterally or automate account takeover.
 - Reports are drafts for human review; BBT never submits them automatically.
 
 ---
@@ -460,10 +601,55 @@ report/PoC generation, attack-path correlation, CLI options and findings.
   exploitation, data extraction or account takeover.
 - Subdomain takeover checks cover common CNAME fingerprints, not every provider.
 - Bounty drafts are generic; filter out categories the program rejects.
+- `-m auto` needs the external tools on `PATH`; missing tools are reported as
+  `skipped` in `hunt_summary.json` and the run continues with the built-ins.
+- Auto mode is an orchestrator, not an exploit framework: tool output is parsed
+  into findings and re-checked against scope, but nothing is chained into an
+  actual compromise. Verify every result manually before submitting.
+- Scope matching is domain/host based. A URL entry does not restrict paths, so
+  keep the whole host on-program when you declare it.
 
 ---
 
 ## 🗒️ Changelog
+
+### 2.5.1
+
+- Added `scripts/install-desktop.sh`: installs `~/.local/bin/bbt` and a
+  searchable `bbt.desktop` entry (keywords: bbt, bug bounty, recon, scan,
+  security) so the tool shows up in the Kali/XFCE application menu.
+- The menu entry opens a terminal with `bbt --help` followed by an interactive
+  shell in the project directory.
+
+### 2.5.0
+
+- Added a `katana` adapter for JavaScript-aware endpoint discovery, enabled in
+  `-m auto --deep`.
+- Katana crawls with `-fs fqdn`, depth 2, `-mdp 150` and a crawl-duration cap;
+  parser maps JSONL endpoints, keeps only in-scope URLs and produces one info
+  finding for notably sensitive or parameterised endpoints.
+- Raw crawl output is saved as `tools/katana.jsonl` in the target directory.
+- New parser/planner tests; the offline suite now covers 162 tests.
+
+### 2.4.0
+
+- Added `-m auto`: a scope-gated orchestrator that takes a URL (or a target
+  file), plans built-in modules plus installed external tools, runs them and
+  writes one correlated report.
+- New scope model (`bbt/scope.py`): domain/wildcard/URL/IP/CIDR entries, scope
+  file parsing, exact-host fallback and guards against private, loopback,
+  link-local and cloud-metadata addresses.
+- New tool adapters (`bbt/adapters.py`) for httpx, nuclei, ffuf, nikto, wpscan,
+  subfinder, gowitness and sqlmap, with parsers, severity mapping and scope
+  re-filtering. Intrusive nuclei tags are blocked by default.
+- `hunt_summary.json` records the plan, every tool run and its artifacts;
+  `SECURITY_REPORT.md` gains *Authorized scope* and *External Tool Runs*
+  sections.
+- New flags: `--authorized`, `--scope-file`, `--scope-host`, `--deep`,
+  `--screenshots`, `--max-tool-findings`, `--allow-private`.
+- Auto mode is refused without explicit authorization and clamps the number of
+  findings imported from external tools.
+- Expanded the offline suite to 160 tests.
 
 ### 2.3.1
 

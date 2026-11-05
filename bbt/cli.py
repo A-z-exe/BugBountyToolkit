@@ -9,15 +9,24 @@ from typing import Dict, List, Optional, Sequence
 from . import __version__
 from .config import MODES, Config
 from .core import Scanner
+from .hunt import HuntError, HuntOrchestrator
+from .scope import ScopeError, ScopePolicy
 from .target import Target, load_targets_file, parse_target
 from .ui import UI, print_banner, setup_logging
 from .utils import have_tool, parse_ports, platform_name, python_ok
 
 OPTIONAL_TOOLS = {
     "nmap": "service/version detection during network scans",
-    "subfinder": "passive subdomain discovery",
+    "subfinder": "passive subdomain discovery (auto --deep)",
     "whois": "domain registration data",
     "dig": "detailed DNS records",
+    "httpx-toolkit": "HTTP fingerprinting (auto)",
+    "nuclei": "template checks with intrusive tags excluded (auto)",
+    "ffuf": "content discovery (auto --deep)",
+    "nikto": "server misconfiguration checks (auto --deep)",
+    "wpscan": "WordPress enumeration when WordPress is detected (auto)",
+    "gowitness": "screenshots (auto --screenshots)",
+    "sqlmap": "SQLi confirmation, aggressive mode only (auto --aggressive)",
 }
 
 LEGAL_TEXT = """
@@ -140,8 +149,15 @@ def build_config(
         extract_js=not getattr(args, "no_js_extract", False),
         bounty_reports=not getattr(args, "no_bounty_reports", False),
         write_pocs=bool(getattr(args, "write_pocs", False)),
-        authorized_pocs=bool(getattr(args, "i_have_authorization", False)),
+        authorized_pocs=bool(
+            getattr(args, "i_have_authorization", False)
+            or getattr(args, "authorized", False)
+        ),
         aggressive=args.aggressive,
+        hunt_deep=bool(getattr(args, "deep", False)),
+        screenshots=bool(getattr(args, "screenshots", False)),
+        max_tool_findings=getattr(args, "max_tool_findings", 200),
+        allow_private=bool(getattr(args, "allow_private", False)),
         output_root=Path(args.output),
         no_color=args.no_color,
         verbose=args.verbose,
@@ -158,7 +174,9 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
             "  python bugbounty_tool.py -t https://example.com -m full\n"
             "  python bugbounty_tool.py -t https://example.com -m web "
             "-H 'Authorization: Bearer ...' --cookie 'session=...'\n"
-            "  python bugbounty_tool.py -t 192.168.1.0/24 -m network"
+            "  python bugbounty_tool.py -t 192.168.1.0/24 -m network\n"
+            "  python bugbounty_tool.py -t https://example.com -m auto "
+            "--authorized --scope-file scope.txt --deep"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -219,7 +237,21 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--write-pocs", action="store_true",
                         help="Generate safe verification PoC scripts (requires --i-have-authorization).")
     parser.add_argument("--i-have-authorization", action="store_true",
-                        help="Confirm written permission for the target (needed for --write-pocs).")
+                        help="Confirm written permission for the target (needed for --write-pocs/auto).")
+    parser.add_argument("--authorized", action="store_true",
+                        help="Alias for --i-have-authorization; required by -m auto.")
+    parser.add_argument("--scope-file",
+                        help="Authorized scope file for -m auto (one host/URL/CIDR per line).")
+    parser.add_argument("--scope-host", action="append", default=[],
+                        help="Authorized host/domain/URL/CIDR for -m auto. Repeatable.")
+    parser.add_argument("--deep", action="store_true",
+                        help="Auto mode: also run ffuf, nikto, nmap and subfinder (slower).")
+    parser.add_argument("--screenshots", action="store_true",
+                        help="Auto mode: capture a screenshot with gowitness when installed.")
+    parser.add_argument("--max-tool-findings", type=int, default=200,
+                        help="Maximum findings accepted from external tools (default 200).")
+    parser.add_argument("--allow-private", action="store_true",
+                        help="Allow RFC1918/loopback targets (isolated labs only).")
     parser.add_argument("--jwt", action="append", help="JWT/bearer token to analyse. Repeatable.")
     parser.add_argument("--proxy", help="Proxy URL for HTTP(S) requests.")
     parser.add_argument("--insecure", action="store_true",
@@ -320,6 +352,18 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         ui.error("The 'requests' package is required. Install it with: pip install -r requirements.txt")
         return 2
 
+    authorized = bool(
+        getattr(args, "i_have_authorization", False)
+        or getattr(args, "authorized", False)
+        or os.environ.get("BBT_AUTHORIZED") == "1"
+    )
+    if args.mode == "auto" and not authorized:
+        ui.error(
+            "Mode 'auto' runs external tools and requires an explicit authorization "
+            "confirmation: add --authorized (or set BBT_AUTHORIZED=1)."
+        )
+        return 2
+
     # Validate user supplied options before the legal prompt / any scan.
     try:
         headers = parse_headers(args.header)
@@ -375,6 +419,43 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         except ValueError as exc:
             ui.error(f"Invalid target {value!r}: {exc}")
             return 2
+
+    if args.mode == "auto":
+        if not targets:
+            ui.error("A target is required. Use -t/--target or -f/--targets-file.")
+            return 2
+        try:
+            scope_policy = ScopePolicy.from_sources(
+                scope_file=args.scope_file,
+                inline=args.scope_host,
+                allow_private=args.allow_private,
+            )
+        except OSError as exc:
+            ui.error(f"Could not read scope file: {exc}")
+            return 2
+        except ScopeError as exc:
+            ui.error(f"Invalid scope: {exc}")
+            return 2
+        if len(scope_policy) == 0:
+            scope_policy = ScopePolicy.for_targets(targets)
+            ui.warn(
+                "No --scope-file/--scope-host supplied: only the exact target host(s) "
+                "are authorized (subdomain enumeration disabled)."
+            )
+        orchestrator = HuntOrchestrator(config, ui, logger, scope_policy)
+        try:
+            session_dir = orchestrator.run(targets)
+        except (ScopeError, HuntError) as exc:
+            ui.error(str(exc))
+            return 2
+        except OSError as exc:
+            ui.error(f"Hunt failed: {exc}")
+            return 2
+        except KeyboardInterrupt:
+            ui.warn("Hunt interrupted by user.")
+            return 130
+        ui.ok(f"Done. Reports are in: {session_dir}")
+        return 0
 
     if args.mode:
         if not targets:

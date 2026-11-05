@@ -93,6 +93,34 @@ class CliOptionTests(unittest.TestCase):
         )
         self.assertFalse(build_config(args, headers={}, cookies={}).verify_tls)
 
+    def test_auto_mode_options_reach_config(self):
+        args = parse_arguments(
+            [
+                "-t",
+                "https://example.com",
+                "-m",
+                "auto",
+                "--authorized",
+                "--scope-file",
+                "scope.txt",
+                "--scope-host",
+                "example.com",
+                "--deep",
+                "--screenshots",
+                "--max-tool-findings",
+                "50",
+                "--allow-private",
+            ]
+        )
+        config = build_config(args, headers={}, cookies={})
+        self.assertTrue(config.authorized_pocs)
+        self.assertTrue(config.hunt_deep)
+        self.assertTrue(config.screenshots)
+        self.assertTrue(config.allow_private)
+        self.assertEqual(config.max_tool_findings, 50)
+        self.assertEqual(args.scope_file, "scope.txt")
+        self.assertEqual(args.scope_host, ["example.com"])
+
     def test_recon_and_report_options_reach_config(self):
         args = parse_arguments(
             [

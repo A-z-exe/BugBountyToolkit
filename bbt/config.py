@@ -13,7 +13,7 @@ from . import __version__
 from .utils import DEFAULT_DIR_WORDS, DEFAULT_WEB_PATHS, TOP_PORTS
 
 #: Modes accepted on the command line and in the interactive menu.
-MODES = ("info", "network", "web", "api", "injection", "full")
+MODES = ("info", "network", "web", "api", "injection", "full", "auto")
 
 #: Ports that are commonly dangerous when exposed without proper controls.
 RISKY_PORTS = {
@@ -105,6 +105,12 @@ class Config:
     # Safety
     aggressive: bool = False  # enables intrusive payloads (SQLi time-based, etc.)
 
+    # Autonomous hunt mode
+    hunt_deep: bool = False  # run slower tools (ffuf, nikto, nmap, subfinder)
+    screenshots: bool = False
+    max_tool_findings: int = 200
+    allow_private: bool = False  # labs only: accept RFC1918/loopback targets
+
     # API testing
     tokens: List[str] = field(default_factory=list)  # JWT/bearer tokens to analyse
 
@@ -129,5 +135,6 @@ class Config:
         self.max_authz_urls = max(0, int(self.max_authz_urls))
         self.max_ssrf_urls = max(0, int(self.max_ssrf_urls))
         self.max_subdomains = max(1, int(self.max_subdomains))
+        self.max_tool_findings = max(1, int(self.max_tool_findings))
         if self.rate is not None and self.rate < 0:
             self.rate = 0.0

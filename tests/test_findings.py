@@ -31,6 +31,15 @@ class FindingsTests(unittest.TestCase):
     def test_invalid_severity_defaults_to_info(self):
         self.assertEqual(Finding(title="x", severity="bogus").severity, "info")
 
+    def test_retain_filters_items_and_resets_dedup_keys(self):
+        store = FindingsStore()
+        store.add(Finding(title="inside", target="https://a.test"))
+        store.add(Finding(title="outside", target="https://b.test"))
+        removed = store.retain(lambda finding: "a.test" in finding.target)
+        self.assertEqual(removed, 1)
+        self.assertEqual([finding.title for finding in store], ["inside"])
+        self.assertTrue(store.add(Finding(title="outside", target="https://b.test")))
+
 
 if __name__ == "__main__":
     unittest.main()

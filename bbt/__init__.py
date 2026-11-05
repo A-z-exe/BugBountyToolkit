@@ -10,7 +10,7 @@ runs WordPress, SSRF, BOLA/IDOR and subdomain-takeover checks; findings can be
 exported as bug-bounty report drafts with safe verification PoCs.
 """
 
-__version__ = "2.3.1"
+__version__ = "2.5.1"
 __author__ = "AmirHossein Zarei (A-z-exe)"
 
 __all__ = ["__version__", "__author__"]
