@@ -742,6 +742,7 @@ MIT — see [LICENSE.md](LICENSE.md).
 **AmirHossein Zarei (A-z-exe)**
 
 - GitHub: [github.com/a-z-exe](https://github.com/a-z-exe)
+- Website: [a-z-exe.github.io](https://a-z-exe.github.io/)
 - Telegram: [t.me/A_Z_exe](https://t.me/A_Z_exe)
 - Instagram: [instagram.com/A_Z_exe](https://instagram.com/A_Z_exe)
 
