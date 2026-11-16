@@ -521,8 +521,16 @@ bbt/
 tests/                     # unit tests (no network required)
 scripts/
 └── install-desktop.sh     # CLI launcher + searchable menu entry
+docs/
+├── rfid-nfc-assessment.md # authorized RFID/NFC card test methodology
+└── rfid-nfc-report-template.md
 legacy/                    # the original v1 script, kept for reference only
 ```
+
+> `docs/rfid-nfc-*` covers **physical access cards**, a separate discipline from the web
+> scanning this tool performs. It is methodology and a report template only — BBT does
+> not touch RFID hardware. Use it only under a signed engagement covering the client's
+> own cards.
 
 ---
 
